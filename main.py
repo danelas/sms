@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 from flask import Flask, request, jsonify
 from sms_booking import SMSBookingManager
@@ -125,39 +126,62 @@ def sms_webhook():
 # Webhook endpoint for Fluent Forms Pro integration
 @app.route('/fluentforms-webhook', methods=['POST'])
 def fluentforms_webhook():
-    # Try to get JSON, fallback to form if needed
-    data = request.get_json(silent=True) or request.form
-    name = data.get('name', 'Customer')
-    phone = data.get('phone', '')
-    message = data.get('message', '')
-
-    # Compose a user message for OpenAI (customize as needed)
-    user_message = f"Form submission from {name} ({phone}): {message}"
-
-    # Use the same OpenAI logic as Messenger/SMS
-    openai_url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "gpt-3.5-turbo",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message}
-        ],
-        "max_tokens": 200,
-        "temperature": 0.85
-    }
-    openai_resp = requests.post(openai_url, headers=headers, json=payload)
-    if openai_resp.status_code != 200:
-        return jsonify({'error': 'OpenAI API error', 'details': openai_resp.text}), 500
-    gpt_reply = openai_resp.json()['choices'][0]['message']['content'].strip()
-
-    # Optionally: send SMS, email, or trigger booking logic here
-    # send_sms(phone, gpt_reply)
-
-    return jsonify({'reply': gpt_reply}), 200
+    try:
+        # Get form data
+        data = request.get_json(silent=True) or request.form
+        
+        # Extract form fields (adjust these to match your form field names)
+        name = data.get('name', 'Customer')
+        phone = data.get('phone', '')
+        service_type = data.get('service_type', 'Mobile')  # e.g., 'Mobile' or 'In-Studio'
+        location = data.get('location', 'Unknown Location')
+        notes = data.get('notes', 'No additional notes')
+        
+        # Generate a unique booking ID
+        booking_id = f"book_{int(time.time())}"
+        
+        # Find available providers (modify this based on your provider selection logic)
+        providers = sms_manager.find_providers(location, service_type)
+        
+        if not providers:
+            return jsonify({
+                'status': 'error',
+                'message': 'No providers available for the selected service/location.'
+            }), 404
+        
+        # Select the first available provider (or implement your own logic)
+        provider = providers[0]
+        provider_phone = provider.get('Phone Number')
+        
+        # Send booking request to the provider
+        sms_manager.send_booking_request(
+            booking_id=booking_id,
+            client_phone=phone,
+            location=location,
+            massage_type=service_type,
+            provider_phone=provider_phone
+        )
+        
+        # Optional: Send confirmation to the client
+        client_message = (
+            f"Hi {name}, we've received your booking request for {service_type} massage at {location}. "
+            f"We've notified a provider and will confirm your appointment shortly!"
+        )
+        # Uncomment to enable SMS confirmation to client
+        # send_sms(phone, client_message)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Booking request sent to provider',
+            'booking_id': booking_id,
+            'provider': provider.get('Name')
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
