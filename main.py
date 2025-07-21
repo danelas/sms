@@ -238,10 +238,18 @@ def sms_webhook():
                 logger.info(f"Generated response: {response_text}")
                 
             except Exception as e:
-                logger.error(f"Error generating OpenAI response: {str(e)}", exc_info=True)
-                # More helpful default message with booking link
-                response_text = "Thanks for reaching out! 😊 You can book a massage anytime at goldtouchmobile.com/providers or text us your preferred day/time and we'll help you out!"
-                logger.info(f"Using fallback response: {response_text}")
+                logger.error(f"Error generating AI response: {str(e)}", exc_info=True)
+                # More engaging default message with booking link
+                response_text = """Hi there! 😊 Thanks for your message! 
+
+You can book a massage 24/7 at: goldtouchmobile.com/providers
+
+Or just reply with your preferred day/time and we'll help you out! 💆‍♀️✨"""
+                logger.info(f"Using fallback response")
+                
+                # Log the full error for debugging
+                import traceback
+                logger.error(f"Full error: {traceback.format_exc()}")
             
             # Send the response back to the sender
             send_sms(to=from_number, body=response_text, from_number=to_number)
@@ -402,9 +410,30 @@ def test_webhook():
         }), 200
 
 # Test endpoint to verify webhook connectivity (GET request for browser testing)
+# Keep-alive endpoint for uptime monitoring
 @app.route('/ping', methods=['GET'])
 def ping():
-    return jsonify({'status': 'alive', 'time': time.time()}), 200
+    return jsonify({
+        'status': 'alive', 
+        'time': time.time(),
+        'service': 'Gold Touch Massage SMS Service'
+    }), 200
+
+# Simple uptime monitor that pings itself every 5 minutes
+import threading
+def keep_alive():
+    import urllib.request
+    import time
+    while True:
+        try:
+            urllib.request.urlopen('https://sms-yd7t.onrender.com/ping')
+        except Exception as e:
+            logger.warning(f"Keep-alive ping failed: {e}")
+        time.sleep(300)  # 5 minutes
+
+# Start the keep-alive thread when the app starts
+if not os.environ.get('WERKZEUG_RUN_MAIN'):
+    threading.Thread(target=keep_alive, daemon=True).start()
 
 @app.route('/test-ai', methods=['GET'])
 def test_ai():
