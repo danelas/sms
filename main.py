@@ -1,9 +1,14 @@
 import os
 import json
 import time
+import logging
 import requests
 from flask import Flask, request, jsonify
-from sms_booking import SMSBookingManager
+from sms_booking import SMSBookingManager, send_sms
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -183,5 +188,36 @@ def fluentforms_webhook():
             'message': str(e)
         }), 500
 
+@app.route('/test-sms', methods=['GET'])
+def test_sms():
+    """Test endpoint to send an SMS to a specified number."""
+    test_number = request.args.get('to')
+    if not test_number:
+        return jsonify({'error': 'Missing "to" parameter (e.g., /test-sms?to=+1234567890)'}), 400
+    
+    message = "🔧 This is a test message from the Gold Touch Massage system!"
+    logger.info(f"Sending test SMS to {test_number}: {message}")
+    
+    try:
+        success = send_sms(test_number, message)
+        if success:
+            logger.info(f"SMS sent successfully to {test_number}")
+            return jsonify({
+                'status': 'success',
+                'message': f'Sent test SMS to {test_number}'
+            })
+        else:
+            logger.error(f"Failed to send SMS to {test_number}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to send SMS. Check server logs for details.'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error sending SMS: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error: {str(e)}'
+        }), 500
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)

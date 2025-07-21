@@ -1,8 +1,12 @@
 import os
 import time
+import logging
 from threading import Timer
 from load_providers import load_providers
 import requests
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 
 # ClickSend SMS config
 CLICKSEND_USERNAME = os.getenv('CLICKSEND_USERNAME', 'YOUR_CLICKSEND_USERNAME')
@@ -13,7 +17,20 @@ CLICKSEND_SMS_URL = "https://rest.clicksend.com/v3/sms/send"
 # Helper to send SMS using ClickSend
 
 def send_sms(to, body):
-    payload = {
+    """Send an SMS using ClickSend.
+    
+    Args:
+        to (str): Recipient phone number in international format (e.g., '+1234567890')
+        body (str): Message content
+        
+    Returns:
+        bool: True if SMS was sent successfully, False otherwise
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Attempting to send SMS to {to}: {body[:50]}...")
+    
+    try:
+        payload = {
         "messages": [
             {
                 "source": "python",
@@ -23,12 +40,23 @@ def send_sms(to, body):
             }
         ]
     }
-    resp = requests.post(
-        CLICKSEND_SMS_URL,
-        auth=(CLICKSEND_USERNAME, CLICKSEND_API_KEY),
-        json=payload
-    )
-    return resp.status_code == 200
+        resp = requests.post(
+            CLICKSEND_SMS_URL,
+            auth=(CLICKSEND_USERNAME, CLICKSEND_API_KEY),
+            json=payload
+        )
+        
+        success = resp.status_code == 200
+        if success:
+            logger.info(f"SMS sent successfully to {to}")
+        else:
+            logger.error(f"Failed to send SMS to {to}. Status: {resp.status_code}, Response: {resp.text}")
+            
+        return success
+        
+    except Exception as e:
+        logger.error(f"Error sending SMS to {to}: {str(e)}")
+        return False
 
 # Booking logic class
 class SMSBookingManager:
