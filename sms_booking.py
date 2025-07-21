@@ -7,6 +7,7 @@ import requests
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ClickSend SMS config
 CLICKSEND_USERNAME = os.getenv('CLICKSEND_USERNAME', 'YOUR_CLICKSEND_USERNAME')
