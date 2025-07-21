@@ -150,13 +150,14 @@ def sms_webhook():
         
         # Parse incoming message (ClickSend format)
         from_number = request.form.get('from') or request.form.get('From')
+        to_number = request.form.get('to') or request.form.get('To')  # The ClickSend number that received the message
         body = request.form.get('message', request.form.get('Body', '')).strip()
         
-        if not from_number:
-            logger.error("No 'from' number in webhook data")
-            return jsonify({'error': 'Missing from number'}), 400
+        if not from_number or not to_number:
+            logger.error(f"Missing 'from' or 'to' number in webhook data. From: {from_number}, To: {to_number}")
+            return jsonify({'error': 'Missing from/to number'}), 400
             
-        logger.info(f"📱 Received SMS from {from_number}: {body}")
+        logger.info(f"📱 Received SMS from {from_number} to {to_number}: {body}")
         
         # Log all form fields for debugging
         for key, value in request.form.items():
@@ -183,12 +184,13 @@ def sms_webhook():
                     sms_manager.handle_provider_response(booking_id, from_number, body.split()[0].upper())
         else:
             # Handle other inbound messages (e.g., customer inquiries)
-            logger.info(f"📩 New message from {from_number}: {body}")
+            logger.info(f"📩 New message from {from_number} to {to_number}: {body}")
             
             # Example: Send an auto-response
             response = "Thank you for your message! We'll get back to you soon."
-            send_sms(from_number, response)
-            logger.info(f"Sent auto-response to {from_number}")
+            # Use the to_number (ClickSend number) as the from_number for the response
+            send_sms(to=from_number, body=response, from_number=to_number)
+            logger.info(f"Sent auto-response from {to_number} to {from_number}")
             
         return ('', 204)  # Return 204 No Content to acknowledge receipt
         

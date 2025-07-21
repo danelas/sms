@@ -17,30 +17,44 @@ CLICKSEND_SMS_URL = "https://rest.clicksend.com/v3/sms/send"
 
 # Helper to send SMS using ClickSend
 
-def send_sms(to, body):
+def send_sms(to, body, from_number=None):
     """Send an SMS using ClickSend.
     
     Args:
         to (str): Recipient phone number in international format (e.g., '+1234567890')
         body (str): Message content
+        from_number (str, optional): Sender ID or number. Defaults to CLICKSEND_FROM_NUMBER.
         
     Returns:
         bool: True if SMS was sent successfully, False otherwise
     """
     logger = logging.getLogger(__name__)
-    logger.info(f"Attempting to send SMS to {to}: {body[:50]}...")
+    
+    # Use provided from_number or fall back to CLICKSEND_FROM_NUMBER
+    from_number = from_number or CLICKSEND_FROM_NUMBER
+    
+    # Sanitize phone numbers
+    to = str(to).strip()
+    from_number = str(from_number).strip()
+    
+    # Prevent sending to the same number (to avoid loops)
+    if to == from_number:
+        logger.error(f"Cannot send SMS: 'to' and 'from' numbers are the same: {to}")
+        return False
+        
+    logger.info(f"Sending SMS from {from_number} to {to}: {body[:50]}...")
     
     try:
         payload = {
-        "messages": [
-            {
-                "source": "python",
-                "from": CLICKSEND_FROM_NUMBER,
-                "body": body,
-                "to": to
-            }
-        ]
-    }
+            "messages": [
+                {
+                    "source": "python",
+                    "from": from_number,
+                    "body": body,
+                    "to": to
+                }
+            ]
+        }
         resp = requests.post(
             CLICKSEND_SMS_URL,
             auth=(CLICKSEND_USERNAME, CLICKSEND_API_KEY),
