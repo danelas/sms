@@ -2,9 +2,19 @@ import os
 import json
 import time
 import logging
+import openai
 import requests
 from flask import Flask, request, jsonify
 from sms_booking import SMSBookingManager, send_sms
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Configure OpenAI
+openai.api_key = os.getenv('OPENAI_API_KEY')
+if not openai.api_key:
+    raise ValueError("OPENAI_API_KEY environment variable not set")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -186,11 +196,51 @@ def sms_webhook():
             # Handle other inbound messages (e.g., customer inquiries)
             logger.info(f"📩 New message from {from_number} to {to_number}: {body}")
             
-            # Example: Send an auto-response
-            response = "Thank you for your message! We'll get back to you soon."
-            # Use the to_number (ClickSend number) as the from_number for the response
-            send_sms(to=from_number, body=response, from_number=to_number)
-            logger.info(f"Sent auto-response from {to_number} to {from_number}")
+            # Generate a dynamic response using OpenAI
+            try:
+                # Prepare the prompt for OpenAI
+                prompt = f"""You're the friendly voice of Gold Touch Massage! 😊 A client just texted us:
+                
+                "{body}"
+                
+                Please respond in a warm, conversational way (like you're texting a friend) while staying professional. 
+                
+                - Use friendly language and emojis where natural (like 😊, 🙌, etc.)
+                - Keep it to 1-2 short sentences max
+                - If they ask about services, mention we offer Swedish, deep tissue, and prenatal massages
+                - If they want to book, ALWAYS include this link: goldtouchmobile.com/providers
+                - If they ask about booking, say something like "You can book easily at goldtouchmobile.com/providers"
+                - End with a warm sign-off like "Looking forward to helping!"
+                
+                Your friendly response: """
+                
+                # Call OpenAI API
+                openai_response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are the warm and welcoming assistant for Gold Touch Massage. Your responses should feel like a friendly conversation with a caring friend who also happens to be a massage expert. Use casual language, occasional emojis, and keep it personal."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=150,
+                    temperature=0.8  # Slightly higher temperature for more creative/friendly responses
+                )
+                
+                # Extract the response text
+                response_text = openai_response.choices[0].message['content'].strip('"\'').strip()
+                
+                # Add a signature if not already present
+                if "Gold Touch" not in response_text:
+                    response_text += " \n\n- Gold Touch Massage"
+                
+                logger.info(f"Generated response: {response_text}")
+                
+            except Exception as e:
+                logger.error(f"Error generating OpenAI response: {str(e)}")
+                response_text = "Thank you for your message! A team member will respond shortly. - Gold Touch Massage"
+            
+            # Send the response back to the sender
+            send_sms(to=from_number, body=response_text, from_number=to_number)
+            logger.info(f"Sent response to {from_number}")
             
         return ('', 204)  # Return 204 No Content to acknowledge receipt
         
