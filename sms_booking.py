@@ -63,6 +63,8 @@ class SMSBookingManager:
     def __init__(self, sheet_name='Massage Providers'):
         self.providers = load_providers(sheet_name)
         self.pending_requests = {}  # booking_id: timer
+        self.active_bookings = {}   # Maps provider_phone -> booking_id
+        logger.info(f"Initialized SMSBookingManager with {len(self.providers)} providers")
 
     def find_providers(self, location, massage_type, exclude=[]):
         # Simple filter logic, can be improved with geolocation
@@ -70,19 +72,57 @@ class SMSBookingManager:
         return filtered
 
     def send_booking_request(self, booking_id, client_phone, location, massage_type, provider_phone):
-        body = f"New booking request at {location} for {massage_type} massage. Are you available? Reply YES or NO."
-        send_sms(provider_phone, body)
+        """Send a booking request to a provider and track the booking."""
+        logger.info(f"Sending booking request {booking_id} to provider {provider_phone}")
+        
+        # Store the booking ID for this provider
+        self.active_bookings[provider_phone] = booking_id
+        
+        # Format the message with the booking ID for tracking
+        body = (
+            f"📅 New Booking Request ({booking_id}):\n"
+            f"Location: {location}\n"
+            f"Service: {massage_type}\n"
+            f"Client: {client_phone}\n"
+            "\nReply YES to accept or NO to decline."
+        )
+        
+        if not send_sms(provider_phone, body):
+            logger.error(f"Failed to send booking request to {provider_phone}")
+            return False
+            
         # Start 15 min timer for provider response
         timer = Timer(900, self.handle_no_response, args=(booking_id, client_phone, location, massage_type, provider_phone))
         timer.start()
         self.pending_requests[booking_id] = timer
+        return True
 
     def handle_provider_response(self, booking_id, provider_phone, response):
-        # Cancel timer if exists
+        """Handle a provider's response to a booking request."""
+        logger.info(f"Processing response '{response}' for booking {booking_id} from {provider_phone}")
+        
+        # Look up booking ID if not provided
+        if not booking_id and provider_phone in self.active_bookings:
+            booking_id = self.active_bookings[provider_phone]
+            logger.info(f"Found booking ID {booking_id} for provider {provider_phone}")
+        
+        if not booking_id:
+            logger.error(f"No booking ID found for provider {provider_phone}")
+            return False
+            
+        # Cancel the timeout timer
         timer = self.pending_requests.pop(booking_id, None)
         if timer:
             timer.cancel()
-        if response.strip().upper() == "YES":
+            logger.info(f"Cancelled timer for booking {booking_id}")
+            
+        # Clean up the active booking
+        if provider_phone in self.active_bookings:
+            del self.active_bookings[provider_phone]
+            
+        response = response.strip().upper()
+        if response == "YES":
+            logger.info(f"Provider {provider_phone} accepted booking {booking_id}")
             # Confirm booking
             send_sms(provider_phone, "Thank you! Booking confirmed.")
             # Notify client (optional)

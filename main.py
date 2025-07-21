@@ -113,20 +113,42 @@ def book():
     else:
         return jsonify({'error': 'No providers found for this location/type'}), 404
 
-# SMS webhook to handle provider replies
+# SMS webhook to handle incoming SMS (e.g., provider replies)
 @app.route('/sms-webhook', methods=['POST'])
 def sms_webhook():
-    # Example assumes Twilio POST format
-    from_number = request.form.get('From')
-    body = request.form.get('Body', '')
-    booking_id = request.form.get('booking_id')  # You may need to track booking_id via session or DB
-    # You may need to match provider by phone number
-    # For demo, just log the reply
-    print(f"Received SMS from {from_number}: {body}")
-    # Process provider response (YES/NO)
-    if booking_id:
-        sms_manager.handle_provider_response(booking_id, from_number, body)
-    return ('', 204)
+    try:
+        # Log raw incoming request data for debugging
+        logger.info(f"Incoming SMS webhook data: {request.form}")
+        
+        # Parse incoming message (ClickSend format)
+        from_number = request.form.get('from')
+        body = request.form.get('message', '').strip()
+        
+        if not from_number:
+            logger.error("No 'from' number in webhook data")
+            return jsonify({'error': 'Missing from number'}), 400
+            
+        logger.info(f"Received SMS from {from_number}: {body}")
+        
+        # Check if this is a provider response to a booking (e.g., "YES" or "NO")
+        if body.upper() in ['YES', 'NO']:
+            # Extract booking_id if available (you may need to track this in a database)
+            booking_id = request.form.get('custom_string')  # Or parse from body
+            if booking_id:
+                logger.info(f"Processing provider response for booking {booking_id}")
+                sms_manager.handle_provider_response(booking_id, from_number, body)
+            else:
+                logger.warning("Received YES/NO but no booking_id found")
+        else:
+            # Handle other inbound messages (e.g., customer inquiries)
+            logger.info(f"Forwarding message to OpenAI: {body}")
+            # Add your OpenAI response logic here if needed
+            
+        return ('', 204)  # Return 204 No Content to acknowledge receipt
+        
+    except Exception as e:
+        logger.error(f"Error in sms_webhook: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Internal server error'}), 500
 
 # Webhook endpoint for Fluent Forms Pro integration
 @app.route('/fluentforms-webhook', methods=['POST'])
@@ -218,6 +240,24 @@ def test_sms():
             'status': 'error',
             'message': f'Error: {str(e)}'
         }), 500
+
+# Test endpoint to verify webhook is working
+@app.route('/test-webhook', methods=['GET', 'POST'])
+def test_webhook():
+    """Test endpoint to verify webhook connectivity."""
+    logger.info("=== Test Webhook Called ===")
+    logger.info(f"Method: {request.method}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Form Data: {request.form}")
+    logger.info(f"JSON Data: {request.json}")
+    logger.info("==========================")
+    return jsonify({
+        'status': 'success',
+        'message': 'Webhook is working!',
+        'method': request.method,
+        'form_data': dict(request.form),
+        'json_data': request.json
+    }), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
