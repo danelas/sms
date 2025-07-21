@@ -16,6 +16,31 @@ app = Flask(__name__)
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'MY_OPENAI_API_KEY')
 FB_PAGE_ACCESS_TOKEN = os.getenv('FB_PAGE_ACCESS_TOKEN', 'MY_PAGE_ACCESS_TOKEN')
 
+# Root endpoint to confirm the server is running
+@app.route('/')
+def index():
+    return """
+    <h1>Gold Touch Massage SMS Service</h1>
+    <p>Server is running! </p>
+    <h3>Test Endpoints:</h3>
+    <ul>
+        <li><a href="/test-webhook" target="_blank">Test Webhook</a> - Check if the webhook is working</li>
+        <li><code>POST /sms-webhook</code> - Handle incoming SMS (test with cURL)</li>
+        <li><code>GET /test-sms?to=+1234567890</code> - Send a test SMS (replace with your number)</li>
+    </ul>
+    <h3>cURL Test Commands:</h3>
+    <pre>
+    # Test webhook with form data
+    curl -X POST https://sms-yd7t.onrender.com/sms-webhook \
+      -d "from=+1234567890&message=Hello"
+
+    # Test webhook with JSON
+    curl -X POST https://sms-yd7t.onrender.com/sms-webhook \
+      -H "Content-Type: application/json" \
+      -d '{"from": "+1234567890", "message": "Hello"}'
+    </pre>
+    """
+
 # Initialize SMS booking manager (loads provider list from Google Sheets)
 sms_manager = SMSBookingManager()
 
