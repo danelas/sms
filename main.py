@@ -7,14 +7,17 @@ import requests
 from flask import Flask, request, jsonify
 from sms_booking import SMSBookingManager, send_sms
 from dotenv import load_dotenv
+from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
 
-# Configure OpenAI
-openai.api_key = os.getenv('OPENAI_API_KEY')
-if not openai.api_key:
+# Initialize OpenAI client
+openai_api_key = os.getenv('OPENAI_API_KEY')
+if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set")
+
+client = OpenAI(api_key=openai_api_key)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -214,8 +217,8 @@ def sms_webhook():
                 
                 Your friendly response: """
                 
-                # Call OpenAI API
-                openai_response = openai.ChatCompletion.create(
+                # Call OpenAI API with v1.0.0+ syntax
+                openai_response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
                         {"role": "system", "content": "You are the warm and welcoming assistant for Gold Touch Massage. Your responses should feel like a friendly conversation with a caring friend who also happens to be a massage expert. Use casual language, occasional emojis, and keep it personal."},
@@ -225,8 +228,8 @@ def sms_webhook():
                     temperature=0.8  # Slightly higher temperature for more creative/friendly responses
                 )
                 
-                # Extract the response text
-                response_text = openai_response.choices[0].message['content'].strip('"\'').strip()
+                # Extract the response text with new response format
+                response_text = openai_response.choices[0].message.content.strip('"\'').strip()
                 
                 # Add a signature if not already present
                 if "Gold Touch" not in response_text:
@@ -235,8 +238,10 @@ def sms_webhook():
                 logger.info(f"Generated response: {response_text}")
                 
             except Exception as e:
-                logger.error(f"Error generating OpenAI response: {str(e)}")
-                response_text = "Thank you for your message! A team member will respond shortly. - Gold Touch Massage"
+                logger.error(f"Error generating OpenAI response: {str(e)}", exc_info=True)
+                # More helpful default message with booking link
+                response_text = "Thanks for reaching out! 😊 You can book a massage anytime at goldtouchmobile.com/providers or text us your preferred day/time and we'll help you out!"
+                logger.info(f"Using fallback response: {response_text}")
             
             # Send the response back to the sender
             send_sms(to=from_number, body=response_text, from_number=to_number)
@@ -400,6 +405,33 @@ def test_webhook():
 @app.route('/ping', methods=['GET'])
 def ping():
     return jsonify({'status': 'alive', 'time': time.time()}), 200
+
+@app.route('/test-ai', methods=['GET'])
+def test_ai():
+    """Test endpoint to verify OpenAI connectivity"""
+    try:
+        test_prompt = "Just say 'AI is working! 😊'"
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": test_prompt}
+            ],
+            max_tokens=20
+        )
+        result = response.choices[0].message.content.strip()
+        return jsonify({
+            'status': 'success',
+            'response': result,
+            'model': response.model
+        })
+    except Exception as e:
+        logger.error(f"OpenAI test failed: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'hint': 'Make sure OPENAI_API_KEY is set correctly in environment variables.'
+        }), 500
 
 if __name__ == '__main__':
     # Use the PORT environment variable if available, otherwise default to 5000
