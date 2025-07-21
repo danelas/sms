@@ -118,36 +118,57 @@ def book():
 def sms_webhook():
     try:
         # Log raw incoming request data for debugging
-        logger.info(f"Incoming SMS webhook data: {request.form}")
+        logger.info("=== Incoming SMS Webhook ===")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Form Data: {dict(request.form)}")
+        logger.info(f"JSON Data: {request.get_json(silent=True) or 'No JSON data'}")
         
         # Parse incoming message (ClickSend format)
-        from_number = request.form.get('from')
-        body = request.form.get('message', '').strip()
+        from_number = request.form.get('from') or request.form.get('From')
+        body = request.form.get('message', request.form.get('Body', '')).strip()
         
         if not from_number:
             logger.error("No 'from' number in webhook data")
             return jsonify({'error': 'Missing from number'}), 400
             
-        logger.info(f"Received SMS from {from_number}: {body}")
+        logger.info(f"📱 Received SMS from {from_number}: {body}")
+        
+        # Log all form fields for debugging
+        for key, value in request.form.items():
+            logger.info(f"Form field - {key}: {value}")
         
         # Check if this is a provider response to a booking (e.g., "YES" or "NO")
         if body.upper() in ['YES', 'NO']:
-            # Extract booking_id if available (you may need to track this in a database)
-            booking_id = request.form.get('custom_string')  # Or parse from body
+            # Try to find booking_id in custom_string or other fields
+            booking_id = request.form.get('custom_string') or request.form.get('booking_id')
+            logger.info(f"Processing provider response: {body} for booking_id: {booking_id}")
+            
             if booking_id:
-                logger.info(f"Processing provider response for booking {booking_id}")
                 sms_manager.handle_provider_response(booking_id, from_number, body)
+                logger.info(f"Handled provider response for booking {booking_id}")
             else:
                 logger.warning("Received YES/NO but no booking_id found")
+                # Try to extract booking ID from message body if possible
+                # Example: "YES book_1234567890"
+                import re
+                match = re.search(r'(book_\d+)', body)
+                if match:
+                    booking_id = match.group(1)
+                    logger.info(f"Extracted booking_id from message: {booking_id}")
+                    sms_manager.handle_provider_response(booking_id, from_number, body.split()[0].upper())
         else:
             # Handle other inbound messages (e.g., customer inquiries)
-            logger.info(f"Forwarding message to OpenAI: {body}")
-            # Add your OpenAI response logic here if needed
+            logger.info(f"📩 New message from {from_number}: {body}")
+            
+            # Example: Send an auto-response
+            response = "Thank you for your message! We'll get back to you soon."
+            send_sms(from_number, response)
+            logger.info(f"Sent auto-response to {from_number}")
             
         return ('', 204)  # Return 204 No Content to acknowledge receipt
         
     except Exception as e:
-        logger.error(f"Error in sms_webhook: {str(e)}", exc_info=True)
+        logger.error(f"❌ Error in sms_webhook: {str(e)}", exc_info=True)
         return jsonify({'error': 'Internal server error'}), 500
 
 # Webhook endpoint for Fluent Forms Pro integration
