@@ -346,7 +346,13 @@ def test_webhook():
             'headers': dict(request.headers)
         }), 200
 
+# Test endpoint to verify webhook connectivity (GET request for browser testing)
+@app.route('/ping', methods=['GET'])
+def ping():
+    return jsonify({'status': 'alive', 'time': time.time()}), 200
+
 if __name__ == '__main__':
     # Use the PORT environment variable if available, otherwise default to 5000
     port = int(os.environ.get('PORT', 5000))
+    logger.info(f"Starting server on port {port}...")
     app.run(host='0.0.0.0', port=port, debug=False)
