@@ -3,7 +3,7 @@ from google.oauth2.service_account import Credentials
 
 # Path to your service account JSON key file
 import os
-SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SHEETS_API', '../sms-openai-fastapi/service-account.json')  # Reads from env or defaults
+SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', '../sms-openai-fastapi/service-account.json')  # Reads from env or defaults
 
 # Define the scope for Sheets API (readonly is safest)
 SCOPES = [
