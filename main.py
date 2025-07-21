@@ -244,20 +244,59 @@ def test_sms():
 # Test endpoint to verify webhook is working
 @app.route('/test-webhook', methods=['GET', 'POST'])
 def test_webhook():
-    """Test endpoint to verify webhook connectivity."""
+    """Test endpoint to verify webhook connectivity.
+    
+    This endpoint can be tested in multiple ways:
+    1. Visit in a browser (GET request)
+    2. Send a POST request with form data
+    3. Send a POST request with JSON data
+    """
+    # Log the incoming request
     logger.info("=== Test Webhook Called ===")
     logger.info(f"Method: {request.method}")
     logger.info(f"Headers: {dict(request.headers)}")
-    logger.info(f"Form Data: {request.form}")
-    logger.info(f"JSON Data: {request.json}")
+    
+    # Parse form data if it exists
+    form_data = {}
+    if request.form:
+        form_data = dict(request.form)
+    
+    # Parse JSON data if it exists
+    json_data = {}
+    if request.is_json:
+        json_data = request.get_json() or {}
+    
+    # Log the data
+    logger.info(f"Form Data: {form_data}")
+    logger.info(f"JSON Data: {json_data}")
     logger.info("==========================")
-    return jsonify({
-        'status': 'success',
-        'message': 'Webhook is working!',
-        'method': request.method,
-        'form_data': dict(request.form),
-        'json_data': request.json
-    }), 200
+    
+    # Return a response based on the request method
+    if request.method == 'GET':
+        return """
+        <h1>Webhook Test Endpoint</h1>
+        <p>This is a test endpoint to verify webhook connectivity.</p>
+        <h3>Test with cURL:</h3>
+        <pre>
+        # Send form data
+        curl -X POST https://sms-yd7t.onrender.com/test-webhook \
+          -d "test=123&message=hello"
+        
+        # Send JSON data
+        curl -X POST https://sms-yd7t.onrender.com/test-webhook \
+          -H "Content-Type: application/json" \
+          -d '{"test": 123, "message": "hello"}'
+        </pre>
+        """
+    else:
+        return jsonify({
+            'status': 'success',
+            'message': 'Webhook is working!',
+            'method': request.method,
+            'form_data': form_data,
+            'json_data': json_data,
+            'headers': dict(request.headers)
+        }), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
