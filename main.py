@@ -152,40 +152,41 @@ def book():
         return jsonify({'error': 'No providers found for this location/type'}), 404
 
 # SMS webhook to handle incoming SMS (e.g., provider replies)
-@app.route('/sms-webhook', methods=['POST'])
+@app.route('/sms-webhook', methods=['POST', 'GET'])
 def sms_webhook():
     try:
         # Log the raw request data for debugging
-        logger.info(f"Incoming webhook data: {request.data}")
-        logger.info(f"Incoming form data: {request.form}")
-        logger.info(f"Incoming headers: {dict(request.headers)}")
+        logger.info("\n=== New Request ===")
+        logger.info(f"Method: {request.method}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Args: {request.args}")
+        logger.info(f"Form data: {dict(request.form)}")
+        logger.info(f"JSON data: {request.get_json(silent=True)}")
         
-        # Parse the incoming message
+        # Handle GET requests (for webhook verification)
+        if request.method == 'GET':
+            logger.info("Received GET request (likely webhook verification)")
+            return jsonify({'status': 'ok'}), 200
+            
+        # Parse the incoming message (support multiple field names for different providers)
         data = request.form
-        from_number = data.get('from')
-        to_number = data.get('to')
-        body = data.get('text', '').strip()
+        from_number = data.get('from') or data.get('sender') or data.get('From')
+        to_number = data.get('to') or data.get('recipient') or data.get('To')
+        body = data.get('text') or data.get('message') or data.get('body') or data.get('Body', '')
+        body = body.strip()
         
         logger.info(f"Processing message - From: {from_number}, To: {to_number}, Body: {body}")
         
         if not all([from_number, to_number]):
-            logger.error(f"Missing required fields. From: {from_number}, To: {to_number}")
-            return jsonify({'status': 'error', 'message': 'Missing required fields'}), 400
+            error_msg = f"Missing required fields. From: {from_number}, To: {to_number}"
+            logger.error(error_msg)
+            return jsonify({'status': 'error', 'message': error_msg}), 400
+            
+        logger.info(f"📱 Received SMS from {from_number} to {to_number}")
         
-        # Log raw incoming request data for debugging
-        logger.info("=== Incoming SMS Webhook ===")
-        logger.info(f"Headers: {dict(request.headers)}")
-        logger.info(f"Form Data: {dict(request.form)}")
-        logger.info(f"JSON Data: {request.get_json(silent=True) or 'No JSON data'}")
-        
-        # Parse incoming message (ClickSend format)
-        from_number = request.form.get('from') or request.form.get('From')
-        to_number = request.form.get('to') or request.form.get('To')  # The ClickSend number that received the message
-        body = request.form.get('message', request.form.get('Body', '')).strip()
-        
-        if not from_number or not to_number:
-            logger.error(f"Missing 'from' or 'to' number in webhook data. From: {from_number}, To: {to_number}")
-            return jsonify({'error': 'Missing from/to number'}), 400
+        # Log all form fields for debugging
+        for key, value in request.form.items():
+            logger.info(f"Form field - {key}: {value}")
             
         logger.info(f"📱 Received SMS from {from_number} to {to_number}: {body}")
         
