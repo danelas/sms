@@ -244,10 +244,13 @@ Book at goldtouchmobile.com/providers"""
                 elif any(word in clean_body for word in ['massage', 'service', 'swedish', 'deep tissue', 'prenatal']):
                     response_text = "We do Swedish, deep tissue, and prenatal. What type are you interested in?"
                     
-                # Default response for anything else
-                else:
+                # Initialize response_text to None
+                response_text = None
+                
+                # Only use AI if no specific response was triggered
+                if response_text is None:
                     try:
-                        # Use AI for natural conversation
+                        # Define prompt inside the try block
                         prompt = f"""You're having a friendly SMS conversation for Gold Touch Massage. 
                         The client just said: "{body}"
                         
@@ -256,8 +259,7 @@ Book at goldtouchmobile.com/providers"""
                         - Casual and friendly
                         - No prices or durations
                         - End with a question to keep the conversation going
-                        
-                        Your response: """
+                        """
                         
                         openai_response = client.chat.completions.create(
                             model="gpt-3.5-turbo",
@@ -271,8 +273,8 @@ Book at goldtouchmobile.com/providers"""
                         response_text = openai_response.choices[0].message.content.strip('"\'').strip()
                         
                     except Exception as e:
-                        response_text = "Thanks for your message! How can I help you today? 😊"
                         logger.error(f"AI response error: {str(e)}")
+                        response_text = "Thanks for your message! How can I help you today? 😊"
                         
                 logger.info(f"Generated response: {response_text[:100]}...")
                 
