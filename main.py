@@ -155,6 +155,23 @@ def book():
 @app.route('/sms-webhook', methods=['POST'])
 def sms_webhook():
     try:
+        # Log the raw request data for debugging
+        logger.info(f"Incoming webhook data: {request.data}")
+        logger.info(f"Incoming form data: {request.form}")
+        logger.info(f"Incoming headers: {dict(request.headers)}")
+        
+        # Parse the incoming message
+        data = request.form
+        from_number = data.get('from')
+        to_number = data.get('to')
+        body = data.get('text', '').strip()
+        
+        logger.info(f"Processing message - From: {from_number}, To: {to_number}, Body: {body}")
+        
+        if not all([from_number, to_number]):
+            logger.error(f"Missing required fields. From: {from_number}, To: {to_number}")
+            return jsonify({'status': 'error', 'message': 'Missing required fields'}), 400
+        
         # Log raw incoming request data for debugging
         logger.info("=== Incoming SMS Webhook ===")
         logger.info(f"Headers: {dict(request.headers)}")
