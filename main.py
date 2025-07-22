@@ -313,8 +313,11 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
             # Send the response back to the sender
             # Note: from_number is the original sender (customer), to_number is our ClickSend number
             logger.info(f"Sending response to {from_number} from {to_number}")
-            send_sms(to=from_number, body=response_text, from_number=to_number)
-            logger.info(f"Sent response to {from_number}")
+            success, message = send_sms(to=from_number, body=response_text, from_number=to_number)
+            if success:
+                logger.info(f"Successfully sent response to {from_number}")
+            else:
+                logger.error(f"Failed to send response to {from_number}: {message}")
             
         return ('', 204)  # Return 204 No Content to acknowledge receipt
         

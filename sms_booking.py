@@ -37,14 +37,29 @@ def send_sms(to, body, from_number=None):
     to = str(to).strip()
     from_number = str(from_number).strip()
     
+    logger.info(f"Preparing to send SMS - From: '{from_number}', To: '{to}', Body: '{body[:50]}...'")
+    
     # Prevent sending to the same number (to avoid loops)
     if to == from_number:
-        logger.error(f"Cannot send SMS: 'to' and 'from' numbers are the same: {to}")
-        return False
+        error_msg = f"Cannot send SMS: 'to' and 'from' numbers are the same: {to}"
+        logger.error(error_msg)
+        return False, error_msg
+    
+    # Validate phone numbers
+    if not to.startswith('+'):
+        error_msg = f"Invalid 'to' number format. Must start with '+'. Got: {to}"
+        logger.error(error_msg)
+        return False, error_msg
         
-    logger.info(f"Sending SMS from {from_number} to {to}: {body[:50]}...")
+    if not (from_number.startswith('+') or from_number.isalpha()):
+        error_msg = f"Invalid 'from' number format. Must be alphanumeric or start with '+'. Got: {from_number}"
+        logger.error(error_msg)
+        return False, error_msg
+    
+    logger.info(f"Sending SMS - From: '{from_number}', To: '{to}', Body length: {len(body)} chars")
     
     try:
+        # Prepare the payload
         payload = {
             "messages": [
                 {
@@ -55,23 +70,50 @@ def send_sms(to, body, from_number=None):
                 }
             ]
         }
-        resp = requests.post(
+        
+        logger.info(f"Sending request to ClickSend - URL: {CLICKSEND_SMS_URL}")
+        logger.debug(f"Request payload: {payload}")
+        
+        # Make the API request
+        response = requests.post(
             CLICKSEND_SMS_URL,
             auth=(CLICKSEND_USERNAME, CLICKSEND_API_KEY),
-            json=payload
+            json=payload,
+            timeout=10
         )
         
-        success = resp.status_code == 200
-        if success:
-            logger.info(f"SMS sent successfully to {to}")
-        else:
-            logger.error(f"Failed to send SMS to {to}. Status: {resp.status_code}, Response: {resp.text}")
-            
-        return success
+        logger.info(f"Received response - Status: {response.status_code}")
+        logger.debug(f"Response: {response.text}")
         
-    except Exception as e:
-        logger.error(f"Error sending SMS to {to}: {str(e)}")
-        return False
+        # Check for HTTP errors
+        response.raise_for_status()
+        
+        # Check the response content
+        response_data = response.json()
+        if response_data.get('response_code') != 'SUCCESS':
+            error_msg = f"ClickSend API error: {response_data.get('response_msg', 'Unknown error')}"
+            logger.error(error_msg)
+            return False, error_msg
+            
+        logger.info(f"SMS sent successfully to {to}")
+        return True, "Message sent successfully"
+        
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Failed to send SMS: {str(e)}"
+        logger.error(error_msg)
+        
+        # Log detailed error information if available
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response status: {e.response.status_code}")
+            try:
+                error_detail = e.response.json()
+                logger.error(f"Error details: {error_detail}")
+                error_msg = f"{error_msg} - {error_detail.get('response_msg', 'No details')}"
+            except:
+                logger.error(f"Response text: {e.response.text}")
+                error_msg = f"{error_msg} - {e.response.text}"
+                
+        return False, error_msg
 
 # Booking logic class
 class SMSBookingManager:
