@@ -33,9 +33,20 @@ def send_sms(to, body, from_number=None):
     # Use provided from_number or fall back to CLICKSEND_FROM_NUMBER
     from_number = from_number or CLICKSEND_FROM_NUMBER
     
-    # Sanitize phone numbers
+    # Sanitize and validate phone numbers
     to = str(to).strip()
     from_number = str(from_number).strip()
+    
+    # Clean phone numbers (keep only digits and +)
+    to = ''.join(c for c in to if c.isdigit() or c == '+')
+    from_number = ''.join(c for c in from_number if c.isdigit() or c == '+')
+    
+    # Ensure numbers start with +
+    if not to.startswith('+'):
+        to = f"+1{to}" if len(to) == 10 else f"+{to}"
+    
+    if not from_number.startswith('+'):
+        from_number = f"+1{from_number}" if len(from_number) == 10 else f"+{from_number}"
     
     logger.info(f"Preparing to send SMS - From: '{from_number}', To: '{to}', Body: '{body[:50]}...'")
     

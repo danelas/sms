@@ -172,12 +172,52 @@ def sms_webhook():
             
         # Parse the incoming message (support multiple field names for different providers)
         data = request.form
-        from_number = data.get('from') or data.get('sender') or data.get('From')
-        to_number = data.get('to') or data.get('recipient') or data.get('To')
+        
+        # Log all form fields for debugging
+        for key, value in data.items():
+            logger.info(f"Form field - {key}: {value}")
+        
+        # Extract message data (support multiple field names and formats)
+        # For ClickSend, the 'from' field contains the sender's number
+        from_number = data.get('from') or data.get('sender') or data.get('From') or data.get('originalsenderid') or data.get('sms')
+        # The 'to' field contains our ClickSend number
+        to_number = data.get('to') or data.get('recipient') or data.get('To') or data.get('originalrecipient')
+        # The actual message content
         body = data.get('text') or data.get('message') or data.get('body') or data.get('Body', '')
         body = body.strip()
         
-        logger.info(f"Processing message - From: {from_number}, To: {to_number}, Body: {body}")
+        # Clean up phone numbers (remove any non-digit characters except +)
+        if from_number:
+            from_number = ''.join(c for c in from_number if c.isdigit() or c == '+')
+        if to_number:
+            to_number = ''.join(c for c in to_number if c.isdigit() or c == '+')
+        
+        # Log the extracted data
+        logger.info(f"📱 Processing SMS from {from_number} to {to_number}")
+        logger.info(f"Message body: {body}")
+        
+        # If we don't have a valid from_number, try to get it from other fields
+        if not from_number:
+            # Check if the message is a reply to our message
+            original_sender = data.get('originalsenderid')
+            if original_sender:
+                from_number = original_sender
+                logger.info(f"Using originalsenderid as from_number: {from_number}")
+                
+            # Check if the 'sms' field contains the sender's number
+            sms_field = data.get('sms')
+            if sms_field and sms_field.startswith('+'):
+                from_number = sms_field
+                logger.info(f"Using sms field as from_number: {from_number}")
+        
+        # Final validation of phone numbers
+        if not from_number or not from_number.startswith('+'):
+            logger.error(f"Invalid from_number format: {from_number}")
+            return jsonify({'error': 'Invalid sender number format'}), 400
+            
+        if not to_number or not to_number.startswith('+'):
+            logger.error(f"Invalid to_number format: {to_number}")
+            return jsonify({'error': 'Invalid recipient number format'}), 400
         
         if not all([from_number, to_number]):
             error_msg = f"Missing required fields. From: {from_number}, To: {to_number}"
