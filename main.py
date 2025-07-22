@@ -311,6 +311,8 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                 logger.error(f"Full error: {traceback.format_exc()}")
             
             # Send the response back to the sender
+            # Note: from_number is the original sender (customer), to_number is our ClickSend number
+            logger.info(f"Sending response to {from_number} from {to_number}")
             send_sms(to=from_number, body=response_text, from_number=to_number)
             logger.info(f"Sent response to {from_number}")
             
