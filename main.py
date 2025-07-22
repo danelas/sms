@@ -151,6 +151,16 @@ def book():
     else:
         return jsonify({'error': 'No providers found for this location/type'}), 404
 
+# Test endpoint to verify the webhook is accessible
+@app.route('/test-webhook', methods=['GET'])
+def test_webhook():
+    """Simple endpoint to test if the webhook is accessible."""
+    return jsonify({
+        'status': 'online',
+        'service': 'Gold Touch Massage SMS Webhook',
+        'timestamp': int(time.time())
+    }), 200
+
 # SMS webhook to handle incoming SMS (e.g., provider replies)
 @app.route('/sms-webhook', methods=['POST', 'GET'])
 def sms_webhook():
@@ -163,10 +173,11 @@ def sms_webhook():
         logger.info(f"Form data: {dict(request.form)}")
         logger.info(f"JSON data: {request.get_json(silent=True)}")
         
-        # Handle GET requests (for webhook verification)
+        # Handle GET requests (for ClickSend verification)
         if request.method == 'GET':
-            logger.info("Received GET request (likely webhook verification)")
-            return jsonify({'status': 'ok'}), 200
+            logger.info("Received GET request - likely ClickSend webhook verification")
+            # Return a simple success response that ClickSend expects
+            return "SMS Callback Request Successful", 200, {'Content-Type': 'text/plain'}
             
         # Parse the incoming message (support multiple field names for different providers)
         data = request.form
