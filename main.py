@@ -244,11 +244,8 @@ Book at goldtouchmobile.com/providers"""
                 elif any(word in clean_body for word in ['massage', 'service', 'swedish', 'deep tissue', 'prenatal']):
                     response_text = "We do Swedish, deep tissue, and prenatal. What type are you interested in?"
                     
-                # Initialize response_text to None
-                response_text = None
-                
                 # Only use AI if no specific response was triggered
-                if response_text is None:
+                if 'response_text' not in locals() or response_text is None:
                     try:
                         # Define prompt inside the try block
                         prompt = f"""You're having a friendly SMS conversation for Gold Touch Massage. 
@@ -276,26 +273,6 @@ Book at goldtouchmobile.com/providers"""
                         logger.error(f"AI response error: {str(e)}")
                         response_text = "Thanks for your message! How can I help you today? 😊"
                         
-                logger.info(f"Generated response: {response_text[:100]}...")
-                
-                # Call OpenAI API with v1.0.0+ syntax
-                openai_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are the warm and welcoming assistant for Gold Touch Massage. Your responses should feel like a friendly conversation with a caring friend who also happens to be a massage expert. Use casual language, occasional emojis, and keep it personal."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=150,
-                    temperature=0.8  # Slightly higher temperature for more creative/friendly responses
-                )
-                
-                # Extract the response text with new response format
-                response_text = openai_response.choices[0].message.content.strip('"\'').strip()
-                
-                # Add a signature if not already present
-                if "Gold Touch" not in response_text:
-                    response_text += " \n\n- Gold Touch Massage"
-                
                 logger.info(f"Generated response: {response_text}")
                 
             except Exception as e:
