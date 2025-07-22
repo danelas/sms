@@ -182,13 +182,8 @@ def sms_webhook():
             logger.error(error_msg)
             return jsonify({'status': 'error', 'message': error_msg}), 400
             
-        logger.info(f"📱 Received SMS from {from_number} to {to_number}")
-        
-        # Log all form fields for debugging
-        for key, value in request.form.items():
-            logger.info(f"Form field - {key}: {value}")
-            
-        logger.info(f"📱 Received SMS from {from_number} to {to_number}: {body}")
+        logger.info(f"📱 Processing SMS from {from_number} to {to_number}")
+        logger.info(f"Message body: {body}")
         
         # Log all form fields for debugging
         for key, value in request.form.items():
