@@ -218,6 +218,10 @@ def sms_webhook():
                 elif any(word in clean_body for word in ['thank', 'thanks', 'bye', 'goodbye']):
                     response_text = "You're welcome! Have a great day! 🌟"
                     
+                # Check for yes/affirmative responses
+                elif any(word in clean_body for word in ['yes', 'yeah', 'sure', 'ok', 'yep']):
+                    response_text = "Great! You can book your appointment at goldtouchmobile.com/providers 😊"
+                    
                 # Check for pricing questions
                 elif any(word in clean_body for word in ['price', 'cost', 'how much', 'rate', 'rates']):
                     response_text = """Here's our pricing:
