@@ -201,21 +201,80 @@ def sms_webhook():
             
             # Generate a dynamic response using OpenAI
             try:
-                # Prepare the prompt for OpenAI
-                prompt = f"""You're the friendly voice of Gold Touch Massage! 😊 A client just texted us:
+                # Track conversation state (in a real app, you'd use a database)
+                # For now, we'll keep it simple with just the last message
                 
-                "{body}"
+                # Define possible conversation paths
+                greetings = ['hi', 'hello', 'hey', 'hi there', 'good morning', 'good afternoon', 'good evening']
                 
-                Please respond in a warm, conversational way (like you're texting a friend) while staying professional. 
+                # Clean the message
+                clean_body = body.lower().strip()
                 
-                - Use friendly language and emojis where natural (like 😊, 🙌, etc.)
-                - Keep it to 1-2 short sentences max
-                - If they ask about services, mention we offer Swedish, deep tissue, and prenatal massages
-                - If they want to book, ALWAYS include this link: goldtouchmobile.com/providers
-                - If they ask about booking, say something like "You can book easily at goldtouchmobile.com/providers"
-                - End with a warm sign-off like "Looking forward to helping!"
+                # Check if it's a greeting
+                if any(greeting in clean_body for greeting in greetings):
+                    response_text = "Hi there! 😊 How can I help?"
+                    
+                # Check for thanks/bye
+                elif any(word in clean_body for word in ['thank', 'thanks', 'bye', 'goodbye']):
+                    response_text = "You're welcome! Have a great day! 🌟"
+                    
+                # Check for pricing questions
+                elif any(word in clean_body for word in ['price', 'cost', 'how much', 'rate', 'rates']):
+                    response_text = """Here's our pricing:
+
+🚗 Mobile (we come to you):
+60 min — $150
+90 min — $200
+
+🏡 In-Studio:
+60 min — $120
+90 min — $170
+
+Book at goldtouchmobile.com/providers"""
                 
-                Your friendly response: """
+                # Check for booking/questions
+                elif any(word in clean_body for word in ['book', 'schedule', 'appointment', 'available']):
+                    response_text = "Book at goldtouchmobile.com/providers 😊"
+                    
+                # Check for location questions
+                elif any(word in clean_body for word in ['where', 'location', 'address', 'come to', 'studio', 'based']):
+                    response_text = "We come to you! Some providers offer in-studio too. Check goldtouchmobile.com/providers"
+                    
+                # Check for services
+                elif any(word in clean_body for word in ['massage', 'service', 'swedish', 'deep tissue', 'prenatal']):
+                    response_text = "We do Swedish, deep tissue, and prenatal. What type are you interested in?"
+                    
+                # Default response for anything else
+                else:
+                    try:
+                        # Use AI for natural conversation
+                        prompt = f"""You're having a friendly SMS conversation for Gold Touch Massage. 
+                        The client just said: "{body}"
+                        
+                        Keep your response:
+                        - Short and sweet (1-2 sentences max)
+                        - Casual and friendly
+                        - No prices or durations
+                        - End with a question to keep the conversation going
+                        
+                        Your response: """
+                        
+                        openai_response = client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "You are a friendly massage therapist assistant. Keep responses short, warm, and conversational."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            max_tokens=60,
+                            temperature=0.8
+                        )
+                        response_text = openai_response.choices[0].message.content.strip('"\'').strip()
+                        
+                    except Exception as e:
+                        response_text = "Thanks for your message! How can I help you today? 😊"
+                        logger.error(f"AI response error: {str(e)}")
+                        
+                logger.info(f"Generated response: {response_text[:100]}...")
                 
                 # Call OpenAI API with v1.0.0+ syntax
                 openai_response = client.chat.completions.create(
