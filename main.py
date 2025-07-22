@@ -244,6 +244,10 @@ Book at goldtouchmobile.com/providers"""
                 elif any(word in clean_body for word in ['massage', 'service', 'swedish', 'deep tissue', 'prenatal']):
                     response_text = "We do Swedish, deep tissue, and prenatal. What type are you interested in?"
                     
+                # Check for availability questions
+                elif any(word in clean_body for word in ['available', 'availability', 'schedule', 'openings', 'appointment']):
+                    response_text = "Yes we do! The quickest and easiest way to book is at goldtouchmobile.com/providers 😊"
+                    
                 # Only use AI if no specific response was triggered
                 if 'response_text' not in locals() or response_text is None:
                     try:
