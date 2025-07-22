@@ -151,15 +151,6 @@ def book():
     else:
         return jsonify({'error': 'No providers found for this location/type'}), 404
 
-# Test endpoint to verify the webhook is accessible
-@app.route('/test-webhook', methods=['GET'])
-def test_webhook():
-    """Simple endpoint to test if the webhook is accessible."""
-    return jsonify({
-        'status': 'online',
-        'service': 'Gold Touch Massage SMS Webhook',
-        'timestamp': int(time.time())
-    }), 200
 
 # SMS webhook to handle incoming SMS (e.g., provider replies)
 @app.route('/sms-webhook', methods=['POST', 'GET'])
@@ -430,7 +421,7 @@ def test_sms():
 # Test endpoint to verify webhook is working
 @app.route('/test-webhook', methods=['GET', 'POST'])
 def test_webhook():
-    """Test endpoint to verify webhook connectivity.
+    """Test endpoint to verify the webhook is working.
     
     This endpoint can be tested in multiple ways:
     1. Visit in a browser (GET request)
@@ -438,7 +429,7 @@ def test_webhook():
     3. Send a POST request with JSON data
     """
     # Log the incoming request
-    logger.info("=== Test Webhook Called ===")
+    logger.info("\n=== Test Webhook Called ===")
     logger.info(f"Method: {request.method}")
     logger.info(f"Headers: {dict(request.headers)}")
     
@@ -446,43 +437,28 @@ def test_webhook():
     form_data = {}
     if request.form:
         form_data = dict(request.form)
+        logger.info(f"Form data: {form_data}")
     
     # Parse JSON data if it exists
     json_data = {}
     if request.is_json:
         json_data = request.get_json() or {}
+        logger.info(f"JSON data: {json_data}")
     
-    # Log the data
-    logger.info(f"Form Data: {form_data}")
-    logger.info(f"JSON Data: {json_data}")
-    logger.info("==========================")
+    # Prepare response
+    response_data = {
+        'status': 'success',
+        'service': 'Gold Touch Massage SMS Webhook',
+        'method': request.method,
+        'timestamp': int(time.time()),
+        'form_data': form_data,
+        'json_data': json_data,
+        'headers': {k: v for k, v in request.headers.items()}
+    }
+    logger.info(f"Returning response: {response_data}")
     
-    # Return a response based on the request method
-    if request.method == 'GET':
-        return """
-        <h1>Webhook Test Endpoint</h1>
-        <p>This is a test endpoint to verify webhook connectivity.</p>
-        <h3>Test with cURL:</h3>
-        <pre>
-        # Send form data
-        curl -X POST https://sms-yd7t.onrender.com/test-webhook \
-          -d "test=123&message=hello"
-        
-        # Send JSON data
-        curl -X POST https://sms-yd7t.onrender.com/test-webhook \
-          -H "Content-Type: application/json" \
-          -d '{"test": 123, "message": "hello"}'
-        </pre>
-        """
-    else:
-        return jsonify({
-            'status': 'success',
-            'message': 'Webhook is working!',
-            'method': request.method,
-            'form_data': form_data,
-            'json_data': json_data,
-            'headers': dict(request.headers)
-        }), 200
+    # Return the response
+    return jsonify(response_data), 200
 
 # Test endpoint to verify webhook connectivity (GET request for browser testing)
 # Keep-alive endpoint for uptime monitoring
