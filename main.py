@@ -35,10 +35,10 @@ CORS(app)  # Enable CORS for all routes
 
 # Rate limiting
 limiter = Limiter(
-    app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
+    app=app,
+    key_func=get_remote_address
 )
+limiter.limit("200 per day; 50 per hour")
 
 def clean_phone_number(number):
     """Basic phone number validation.
@@ -88,9 +88,9 @@ def index():
     <p>Server is running! </p>
     <h3>Test Endpoints:</h3>
     <ul>
-        <li><a href="/test-webhook" target="_blank">Test Webhook</a> - Check if the webhook is working</li>
+        <li><a href="/sms-webhook" target="_blank">Test Webhook</a> - Check if the webhook is working</li>
         <li><code>POST /sms-webhook</code> - Handle incoming SMS (test with cURL)</li>
-        <li><code>GET /test-sms?to=+1234567890</code> - Send a test SMS (replace with your number)</li>
+        <li><code>GET /sms-webhook?to=+1234567890</code> - Send a test SMS (replace with your number)</li>
     </ul>
     <h3>cURL Test Commands:</h3>
     <pre>
