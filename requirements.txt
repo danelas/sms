@@ -4,6 +4,6 @@ flask-limiter>=2.8.1
 requests>=2.26.0
 gspread>=5.1.1
 google-auth>=2.3.0
-openai>=0.27.0
+openai>=1.0.0
 python-dotenv>=0.19.0
 pytz>=2021.3

@@ -71,14 +71,17 @@ def clean_phone_number(number):
         return None
 
 # Initialize OpenAI client
+from openai import OpenAI
+
 openai_api_key = os.getenv('OPENAI_API_KEY')
 if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set")
 
-client = openai.ChatCompletion(api_key=openai_api_key)
+# Initialize the OpenAI client
+client = OpenAI(api_key=openai_api_key)
 
-# Set your tokens as environment variables or replace with your actual values
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'MY_OPENAI_API_KEY')
+# For backward compatibility
+OPENAI_API_KEY = openai_api_key
 
 # Root endpoint to confirm the server is running
 @app.route('/')
@@ -478,7 +481,7 @@ Book at goldtouchmobile.com/providers"""
                         """
                         
                         # Generate response using OpenAI
-                        response = client.create(
+                        response = client.chat.completions.create(
                             model="gpt-4",
                             messages=[
                                 {"role": "system", "content": "You are a friendly massage therapist assistant. Keep responses short, warm, and conversational."},
@@ -487,7 +490,7 @@ Book at goldtouchmobile.com/providers"""
                             max_tokens=150,
                             temperature=0.7,
                         )
-                        response_text = response.choices[0].message['content'].strip()
+                        response_text = response.choices[0].message.content.strip()
                         logger.info(f"Generated response: {response_text}")
                     except Exception as e:
                         logger.error(f"AI response error: {str(e)}", exc_info=True)
