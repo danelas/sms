@@ -3,31 +3,82 @@ import json
 import time
 import logging
 import openai
+from flask import Flask, request, jsonify, render_template, redirect, url_for
+from flask_cors import CORS
+from datetime import datetime, timedelta
+import pytz
 import requests
-from flask import Flask, request, jsonify
-from sms_booking import SMSBookingManager, send_sms
 from dotenv import load_dotenv
-from openai import OpenAI
+from sms_booking import SMSBookingManager, send_sms
+import re
+import traceback
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
+# Rate limiting
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+def clean_phone_number(number):
+    """Basic phone number validation.
+    
+    Args:
+        number: The phone number to validate
+        
+    Returns:
+        str: The original number if valid, None if invalid
+    """
+    if not number:
+        logger.warning("No phone number provided")
+        return None
+        
+    try:
+        # Convert to string and strip whitespace
+        number_str = str(number).strip()
+        
+        # Basic validation - must contain at least 10 digits
+        digits = sum(c.isdigit() for c in number_str)
+        if digits < 10:
+            logger.warning(f"Phone number too short: {number_str}")
+            return None
+            
+        logger.info(f"Using phone number as-is: {number_str}")
+        return number_str
+        
+    except Exception as e:
+        logger.error(f"Error validating phone number '{number}': {str(e)}")
+        return None
 
 # Initialize OpenAI client
 openai_api_key = os.getenv('OPENAI_API_KEY')
 if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set")
 
-client = OpenAI(api_key=openai_api_key)
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
+client = openai.ChatCompletion(api_key=openai_api_key)
 
 # Set your tokens as environment variables or replace with your actual values
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'MY_OPENAI_API_KEY')
-FB_PAGE_ACCESS_TOKEN = os.getenv('FB_PAGE_ACCESS_TOKEN', 'MY_PAGE_ACCESS_TOKEN')
 
 # Root endpoint to confirm the server is running
 @app.route('/')
@@ -76,50 +127,6 @@ SYSTEM_PROMPT = (
 )
 
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    try:
-        data = request.get_json()
-        entry = data['entry'][0]
-        messaging = entry['messaging'][0]
-        sender_id = messaging['sender']['id']
-        message_text = messaging['message']['text']
-    except (KeyError, IndexError, TypeError):
-        return jsonify({'error': 'Invalid payload structure'}), 400
-
-    # Call OpenAI ChatGPT
-    openai_url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "gpt-3.5-turbo",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": message_text}
-        ],
-        "max_tokens": 200,
-        "temperature": 0.85
-    }
-    openai_resp = requests.post(openai_url, headers=headers, json=payload)
-    if openai_resp.status_code != 200:
-        return jsonify({'error': 'OpenAI API error', 'details': openai_resp.text}), 500
-    gpt_reply = openai_resp.json()['choices'][0]['message']['content'].strip()
-
-    # Send reply back to Facebook Messenger
-    fb_url = f"https://graph.facebook.com/v12.0/me/messages?access_token={FB_PAGE_ACCESS_TOKEN}"
-    fb_payload = {
-        "recipient": {"id": sender_id},
-        "message": {"text": gpt_reply}
-    }
-    fb_headers = {"Content-Type": "application/json"}
-    fb_resp = requests.post(fb_url, headers=fb_headers, json=fb_payload)
-
-    if fb_resp.status_code != 200:
-        return jsonify({'error': 'Facebook Send API error', 'details': fb_resp.text}), 500
-
-    return jsonify({'reply': gpt_reply}), 200
 
 # Booking endpoint
 @app.route('/book', methods=['POST'])
@@ -153,76 +160,225 @@ def book():
 
 
 # SMS webhook to handle incoming SMS (e.g., provider replies)
+@app.route('/test-sms', methods=['GET', 'POST'])
+def test_sms_endpoint():
+    """Test endpoint to check if SMS webhook is working"""
+    test_data = {
+        'status': 'success',
+        'message': 'Test endpoint is working',
+        'timestamp': datetime.utcnow().isoformat(),
+        'request': {
+            'method': request.method,
+            'headers': dict(request.headers),
+            'form': dict(request.form),
+            'json': request.get_json(silent=True),
+            'args': dict(request.args)
+        }
+    }
+    return jsonify(test_data), 200
+
 @app.route('/sms-webhook', methods=['POST', 'GET'])
+@limiter.limit("10 per minute")  # Rate limiting
+@limiter.limit("100 per day")   # Additional rate limit
 def sms_webhook():
+    # Create a unique request ID for tracking
+    import uuid
+    import json
+    import traceback
+    
+    request_id = str(uuid.uuid4())[:8]
+    
+    # Log the raw request data first
     try:
-        # Log the raw request data for debugging
-        logger.info("\n=== New Request ===")
+        logger.info(f"\n=== NEW REQUEST {request_id} ===")
+        logger.info(f"Method: {request.method}")
+        logger.info(f"URL: {request.url}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Content-Type: {request.content_type}")
+        logger.info(f"Form Data: {dict(request.form)}")
+        logger.info(f"JSON Data: {request.get_json(silent=True)}")
+        logger.info(f"Raw Data: {request.get_data().decode('utf-8', errors='replace')}")
+    except Exception as e:
+        logger.error(f"Error logging request data: {str(e)}\n{traceback.format_exc()}")
+    
+    # Log the raw request data first
+    try:
+        logger.info(f"\n=== RAW REQUEST DATA ===")
         logger.info(f"Method: {request.method}")
         logger.info(f"Headers: {dict(request.headers)}")
-        logger.info(f"Args: {request.args}")
+        logger.info(f"Content-Type: {request.content_type}")
+        logger.info(f"Raw data: {request.get_data().decode('utf-8', errors='replace')}")
         logger.info(f"Form data: {dict(request.form)}")
         logger.info(f"JSON data: {request.get_json(silent=True)}")
+    except Exception as e:
+        logger.error(f"Error logging raw request: {str(e)}")
+    
+    debug_info = {
+        'timestamp': datetime.utcnow().isoformat(),
+        'request_id': request_id,
+        'method': request.method,
+        'headers': dict(request.headers),
+        'form': dict(request.form),
+        'json': request.get_json(silent=True),
+        'args': dict(request.args),
+        'remote_addr': request.remote_addr,
+        'user_agent': str(request.user_agent),
+        'content_type': request.content_type,
+        'raw_data': request.get_data().decode('utf-8', errors='replace')
+    }
+    
+    # Log the debug info
+    logger.info(f"\n=== INCOMING MESSAGE DEBUG ===\n{json.dumps(debug_info, indent=2)}")
+    
+    try:
+        logger.info(f"\n=== New Request ({request_id}) ===")
+        logger.info(f"Time: {datetime.utcnow().isoformat()}")
         
         # Handle GET requests (for ClickSend verification)
         if request.method == 'GET':
-            logger.info("Received GET request - likely ClickSend webhook verification")
-            # Return a simple success response that ClickSend expects
+            logger.info("Received GET request - ClickSend webhook verification")
             return "SMS Callback Request Successful", 200, {'Content-Type': 'text/plain'}
             
-        # Parse the incoming message (support multiple field names for different providers)
+        # Log request details
+        logger.info(f"[{request_id}] Method: {request.method}")
+        logger.info(f"[{request_id}] URL: {request.url}")
+        logger.info(f"[{request_id}] Headers: {dict(request.headers)}")
+        logger.info(f"[{request_id}] Content-Type: {request.content_type}")
+        logger.info(f"[{request_id}] Raw Data: {request.get_data()[:1000]}")  # Log first 1000 chars of raw data
+        
+        # Check content type and parse data
+        if not request.is_json and not request.form:
+            logger.error("No form or JSON data received")
+            return jsonify({'error': 'No data received'}), 400
+            
         data = request.form
         
         # Log all form fields for debugging
+        logger.info(f"\n[{request_id}] === Form Data ===")
         for key, value in data.items():
-            logger.info(f"Form field - {key}: {value}")
+            logger.info(f"[{request_id}] {key}: {value}")
         
-        # Extract message data (support multiple field names and formats)
-        # For ClickSend, the 'from' field contains the sender's number
-        from_number = data.get('from') or data.get('sender') or data.get('From') or data.get('originalsenderid') or data.get('sms')
-        # The 'to' field contains our ClickSend number
-        to_number = data.get('to') or data.get('recipient') or data.get('To') or data.get('originalrecipient')
-        # The actual message content
-        body = data.get('text') or data.get('message') or data.get('body') or data.get('Body', '')
-        body = body.strip()
-        
-        # Clean up phone numbers (remove any non-digit characters except +)
-        if from_number:
-            from_number = ''.join(c for c in from_number if c.isdigit() or c == '+')
-        if to_number:
-            to_number = ''.join(c for c in to_number if c.isdigit() or c == '+')
-        
-        # Log the extracted data
-        logger.info(f"📱 Processing SMS from {from_number} to {to_number}")
-        logger.info(f"Message body: {body}")
-        
-        # If we don't have a valid from_number, try to get it from other fields
-        if not from_number:
-            # Check if the message is a reply to our message
-            original_sender = data.get('originalsenderid')
-            if original_sender:
-                from_number = original_sender
-                logger.info(f"Using originalsenderid as from_number: {from_number}")
-                
-            # Check if the 'sms' field contains the sender's number
-            sms_field = data.get('sms')
-            if sms_field and sms_field.startswith('+'):
-                from_number = sms_field
-                logger.info(f"Using sms field as from_number: {from_number}")
-        
-        # Final validation of phone numbers
-        if not from_number or not from_number.startswith('+'):
-            logger.error(f"Invalid from_number format: {from_number}")
-            return jsonify({'error': 'Invalid sender number format'}), 400
+        # Log JSON data if present
+        if request.is_json:
+            json_data = request.get_json()
+            logger.info(f"[{request_id}] === JSON Data ===")
+            logger.info(f"[{request_id}] {json_data}")
             
-        if not to_number or not to_number.startswith('+'):
-            logger.error(f"Invalid to_number format: {to_number}")
-            return jsonify({'error': 'Invalid recipient number format'}), 400
+        # Log ClickSend specific fields
+        clicksend_fields = ['to', 'from', 'body', 'message_id', 'timestamp', 'keyword', 'originalbody', 
+                          'senderid', 'originalrecipient', 'date', 'source', 'type', 'network_code',
+                          'network_name', 'country', 'price', 'status']
+        for field in clicksend_fields:
+            if field in data:
+                logger.info(f"[{request_id}] ClickSend field - {field}: {data[field]}")
+            
+        # Log all available data for debugging
+        logger.info(f"\n[{request_id}] === All Available Data ===")
+        logger.info(f"[{request_id}] Request args: {request.args}")
+        logger.info(f"[{request_id}] Request form: {request.form}")
+        logger.info(f"[{request_id}] Request values: {request.values}")
+        logger.info(f"[{request_id}] Request JSON: {request.get_json(silent=True)}")
         
-        if not all([from_number, to_number]):
-            error_msg = f"Missing required fields. From: {from_number}, To: {to_number}"
+        try:
+            # Log all available data fields for debugging
+            logger.info("\n=== All Available Data Fields ===")
+            logger.info(f"Request method: {request.method}")
+            logger.info(f"Content-Type: {request.content_type}")
+            logger.info(f"Form data: {dict(request.form)}")
+            logger.info(f"JSON data: {request.get_json(silent=True)}")
+            logger.info(f"Raw data: {request.get_data().decode('utf-8', errors='replace')}")
+            
+            # Get data from form or JSON
+            if request.is_json:
+                json_data = request.get_json(silent=True) or {}
+                data = {**data, **json_data}  # Merge with form data
+                
+            # Extract and clean message data - handle different field names from ClickSend
+            from_number = clean_phone_number(
+                data.get('from') or 
+                data.get('sender') or 
+                data.get('From') or 
+                data.get('originalsenderid') or 
+                data.get('sms') or
+                data.get('from_number') or
+                data.get('contact', {}).get('phone_number') or
+                data.get('source') or
+                data.get('source_number')
+            )
+            
+            to_number = clean_phone_number(
+                data.get('to') or 
+                data.get('recipient') or 
+                data.get('To') or 
+                data.get('originalrecipient') or
+                data.get('to_number') or
+                data.get('destination', '').split(':')[-1] or  # Handle ClickSend's format
+                data.get('target') or
+                data.get('target_number')
+            )
+            
+            body = (
+                data.get('text') or 
+                data.get('message') or 
+                data.get('body') or 
+                data.get('Body') or
+                data.get('message_body') or
+                data.get('content') or
+                data.get('message_text') or
+                data.get('sms_body') or
+                ''
+            )
+            
+            # Clean up the body
+            if body is not None and not isinstance(body, str):
+                body = str(body)
+            body = (body or '').strip()
+            
+            # Log extracted data
+            logger.info(f"\n=== Extracted Data ===")
+            logger.info(f"From: {from_number} (type: {type(from_number)})")
+            logger.info(f"To: {to_number} (type: {type(to_number)})")
+            logger.info(f"Body: {body} (type: {type(body)})")
+            
+            # Validate required fields with more detailed error messages
+            if not from_number:
+                error_msg = f"Missing or invalid 'from' number in data: {dict(data)}"
+                logger.error(error_msg)
+                return jsonify({
+                    'error': 'Invalid sender number format',
+                    'details': error_msg,
+                    'received_data': dict(data),
+                    'request_headers': dict(request.headers),
+                    'request_method': request.method,
+                    'content_type': request.content_type
+                }), 400
+                
+            if not to_number:
+                error_msg = f"Missing or invalid 'to' number in data: {dict(data)}"
+                logger.error(error_msg)
+                return jsonify({
+                    'error': 'Invalid recipient number format',
+                    'details': error_msg,
+                    'received_data': dict(data),
+                    'request_headers': dict(request.headers),
+                    'request_method': request.method,
+                    'content_type': request.content_type
+                }), 400
+                
+            if not body:
+                logger.warning("Empty message body received")
+                
+        except Exception as e:
+            error_msg = f"Error processing request: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
-            return jsonify({'status': 'error', 'message': error_msg}), 400
+            return jsonify({
+                'error': 'Error processing request',
+                'details': str(e),
+                'request_headers': dict(request.headers),
+                'request_method': request.method,
+                'content_type': request.content_type,
+                'raw_data': request.get_data().decode('utf-8', errors='replace')
+            }), 400
             
         logger.info(f"📱 Processing SMS from {from_number} to {to_number}")
         logger.info(f"Message body: {body}")
@@ -232,7 +388,7 @@ def sms_webhook():
             logger.info(f"Form field - {key}: {value}")
         
         # Check if this is a provider response to a booking (e.g., "YES" or "NO")
-        if body.upper() in ['YES', 'NO']:
+        if body and body.upper() in ['YES', 'NO']:
             # Try to find booking_id in custom_string or other fields
             booking_id = request.form.get('custom_string') or request.form.get('booking_id')
             logger.info(f"Processing provider response: {body} for booking_id: {booking_id}")
@@ -321,20 +477,27 @@ Book at goldtouchmobile.com/providers"""
                         - End with a question to keep the conversation going
                         """
                         
-                        openai_response = client.chat.completions.create(
-                            model="gpt-3.5-turbo",
+                        # Generate response using OpenAI
+                        response = client.create(
+                            model="gpt-4",
                             messages=[
                                 {"role": "system", "content": "You are a friendly massage therapist assistant. Keep responses short, warm, and conversational."},
                                 {"role": "user", "content": prompt}
                             ],
-                            max_tokens=60,
-                            temperature=0.8
+                            max_tokens=150,
+                            temperature=0.7,
                         )
-                        response_text = openai_response.choices[0].message.content.strip('"\'').strip()
-                        
+                        response_text = response.choices[0].message['content'].strip()
+                        logger.info(f"Generated response: {response_text}")
                     except Exception as e:
-                        logger.error(f"AI response error: {str(e)}")
-                        response_text = "Thanks for your message! How can I help you today? 😊"
+                        logger.error(f"AI response error: {str(e)}", exc_info=True)
+                        # More engaging default message with booking link
+                        response_text = """Hi there! 😊 Thanks for your message! 
+
+You can book a massage 24/7 at: goldtouchmobile.com/providers
+
+Or just reply with your preferred day/time and we'll help you out! 💆‍♀️✨"""
+                        logger.info("Using fallback response")
                         
                 logger.info(f"Generated response: {response_text}")
                 
@@ -346,26 +509,54 @@ Book at goldtouchmobile.com/providers"""
 You can book a massage 24/7 at: goldtouchmobile.com/providers
 
 Or just reply with your preferred day/time and we'll help you out! 💆‍♀️✨"""
-                logger.info(f"Using fallback response")
+                logger.info("Using fallback response")
                 
                 # Log the full error for debugging
                 import traceback
                 logger.error(f"Full error: {traceback.format_exc()}")
             
             # Send the response back to the sender
-            # Note: from_number is the original sender (customer), to_number is our ClickSend number
-            logger.info(f"Sending response to {from_number} from {to_number}")
-            success, message = send_sms(to=from_number, body=response_text, from_number=to_number)
-            if success:
-                logger.info(f"Successfully sent response to {from_number}")
-            else:
-                logger.error(f"Failed to send response to {from_number}: {message}")
-            
-        return ('', 204)  # Return 204 No Content to acknowledge receipt
-        
+            try:
+                logger.info(f"Sending response to {from_number} from {to_number}")
+                success, message = send_sms(
+                    to=from_number, 
+                    body=response_text, 
+                    from_number=to_number
+                )
+                
+                if success:
+                    logger.info(f"Successfully sent response to {from_number}")
+                    response_data = {
+                        'status': 'success',
+                        'message': 'Message processed and response sent',
+                        'to': from_number,
+                        'from': to_number,
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                    return jsonify(response_data), 200
+                else:
+                    logger.error(f"Failed to send SMS: {message}")
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Failed to send response',
+                        'error': str(message)
+                    }), 500
+                    
+            except Exception as send_error:
+                logger.error(f"Error sending SMS: {str(send_error)}", exc_info=True)
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Error sending response',
+                    'error': str(send_error)
+                }), 500
+                
     except Exception as e:
-        logger.error(f"❌ Error in sms_webhook: {str(e)}", exc_info=True)
-        return jsonify({'error': 'Internal server error'}), 500
+        logger.error(f"❌ Unhandled error in sms_webhook: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': 'Internal server error',
+            'error': str(e)
+        }), 500
 
 # Webhook endpoint for Fluent Forms Pro integration
 @app.route('/fluentforms-webhook', methods=['POST'])

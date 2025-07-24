@@ -33,20 +33,20 @@ def send_sms(to, body, from_number=None):
     # Use provided from_number or fall back to CLICKSEND_FROM_NUMBER
     from_number = from_number or CLICKSEND_FROM_NUMBER
     
-    # Sanitize and validate phone numbers
-    to = str(to).strip()
-    from_number = str(from_number).strip()
+    # Basic phone number validation
+    to = str(to).strip() if to else None
+    from_number = str(from_number).strip() if from_number else None
     
-    # Clean phone numbers (keep only digits and +)
-    to = ''.join(c for c in to if c.isdigit() or c == '+')
-    from_number = ''.join(c for c in from_number if c.isdigit() or c == '+')
-    
-    # Ensure numbers start with +
-    if not to.startswith('+'):
-        to = f"+1{to}" if len(to) == 10 else f"+{to}"
-    
-    if not from_number.startswith('+'):
-        from_number = f"+1{from_number}" if len(from_number) == 10 else f"+{from_number}"
+    # Basic validation - must contain at least 10 digits
+    if not to or sum(c.isdigit() for c in to) < 10:
+        error_msg = f"Invalid 'to' number format. Must contain at least 10 digits. Got: {to}"
+        logger.error(error_msg)
+        return False, error_msg
+        
+    if not from_number or sum(c.isdigit() for c in from_number) < 10:
+        error_msg = f"Invalid 'from' number format. Must contain at least 10 digits. Got: {from_number}"
+        logger.error(error_msg)
+        return False, error_msg
     
     logger.info(f"Preparing to send SMS - From: '{from_number}', To: '{to}', Body: '{body[:50]}...'")
     
