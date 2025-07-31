@@ -51,15 +51,14 @@ def send_sms(to, body, from_number=None):
         logger.info(f"Preparing to send SMS - From: '{from_number}', To: '{to}', Body: '{body[:50]}...'")
         
         # Initialize TextMagic client
-        from textmagic import TextmagicRestClient
-        client = TextmagicRestClient(TEXTMAGIC_USERNAME, TEXTMAGIC_API_KEY)
+        import textmagic
+        client = textmagic.TextMagicClient(TEXTMAGIC_USERNAME, TEXTMAGIC_API_KEY)
         
         # Send the message
         result = client.messages.create(
             phones=to.replace('+', ''),  # TextMagic doesn't want the + in the number
             text=body,
-            from_company=from_number if from_number.isalpha() else None,
-            from_number=from_number if from_number.startswith('+') else None
+            from_=from_number  # Use the from_ parameter for sender ID
         )
         
         # Check if the message was sent successfully
