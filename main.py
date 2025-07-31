@@ -491,14 +491,31 @@ Book at goldtouchmobile.com/providers"""
                         """
                         
                         # Generate response using OpenAI
+                        system_prompt = """You are a friendly and knowledgeable massage therapist assistant. Use the following information to answer questions naturally in a conversational way. Don't list information unless asked, and keep responses warm and engaging.
+
+Key Information to Use Naturally:
+- Booking: Direct users to goldtouchmobile.com/providers for the quickest booking
+- Services: Swedish, Deep tissue, Reflexology, Sports Massage, and more
+- Pricing (only when specifically asked):
+  🚗 Mobile: 60 min - $150, 90 min - $200
+  🏡 In-Studio: 60 min - $120, 90 min - $170
+- Some providers have in-studio options (visible on booking page)
+
+Keep responses:
+- Friendly and conversational
+- 1-2 sentences max
+- Include emojis when appropriate
+- End with a question when it makes sense to continue the conversation
+- Don't sound like a script - be natural and engaging"""
+
                         response = client.chat.completions.create(
                             model="gpt-4",
                             messages=[
-                                {"role": "system", "content": "You are a friendly massage therapist assistant. Keep responses short, warm, and conversational."},
+                                {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": prompt}
                             ],
                             max_tokens=150,
-                            temperature=0.7,
+                            temperature=0.8,  # Slightly higher temperature for more varied responses
                         )
                         response_text = response.choices[0].message.content.strip()
                         logger.info(f"Generated response: {response_text}")
