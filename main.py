@@ -296,41 +296,51 @@ def sms_webhook():
                 json_data = request.get_json(silent=True) or {}
                 data = {**data, **json_data}  # Merge with form data
                 
-            # Extract and clean message data - handle different field names from ClickSend
-            from_number = clean_phone_number(
-                data.get('from') or 
-                data.get('sender') or 
-                data.get('From') or 
-                data.get('originalsenderid') or 
-                data.get('sms') or
-                data.get('from_number') or
-                data.get('contact', {}).get('phone_number') or
-                data.get('source') or
-                data.get('source_number')
-            )
+            # Check if this is a TextMagic webhook
+            is_textmagic = 'sender' in data and 'receiver' in data and 'text' in data
             
-            to_number = clean_phone_number(
-                data.get('to') or 
-                data.get('recipient') or 
-                data.get('To') or 
-                data.get('originalrecipient') or
-                data.get('to_number') or
-                data.get('destination', '').split(':')[-1] or  # Handle ClickSend's format
-                data.get('target') or
-                data.get('target_number')
-            )
-            
-            body = (
-                data.get('text') or 
-                data.get('message') or 
-                data.get('body') or 
-                data.get('Body') or
-                data.get('message_body') or
-                data.get('content') or
-                data.get('message_text') or
-                data.get('sms_body') or
-                ''
-            )
+            if is_textmagic:
+                # Handle TextMagic webhook format
+                logger.info("Processing TextMagic webhook format")
+                from_number = clean_phone_number(data.get('sender'))
+                to_number = clean_phone_number(data.get('receiver'))
+                body = data.get('text', '')
+            else:
+                # Handle other webhook formats (ClickSend, etc.)
+                from_number = clean_phone_number(
+                    data.get('from') or 
+                    data.get('sender') or 
+                    data.get('From') or 
+                    data.get('originalsenderid') or 
+                    data.get('sms') or
+                    data.get('from_number') or
+                    data.get('contact', {}).get('phone_number') or
+                    data.get('source') or
+                    data.get('source_number')
+                )
+                
+                to_number = clean_phone_number(
+                    data.get('to') or 
+                    data.get('recipient') or 
+                    data.get('To') or 
+                    data.get('originalrecipient') or
+                    data.get('to_number') or
+                    data.get('destination', '').split(':')[-1] or  # Handle ClickSend's format
+                    data.get('target') or
+                    data.get('target_number')
+                )
+                
+                body = (
+                    data.get('text') or 
+                    data.get('message') or 
+                    data.get('body') or 
+                    data.get('Body') or
+                    data.get('message_body') or
+                    data.get('content') or
+                    data.get('message_text') or
+                    data.get('sms_body') or
+                    ''
+                )
             
             # Clean up the body
             if body is not None and not isinstance(body, str):
