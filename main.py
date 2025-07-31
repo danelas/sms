@@ -565,60 +565,107 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
 @app.route('/fluentforms-webhook', methods=['POST'])
 def fluentforms_webhook():
     try:
+        # Log the raw request data
+        logger.info("=== New FluentForms Webhook Request ===")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Form Data: {request.form}")
+        
         # Get form data
         data = request.get_json(silent=True) or request.form
+        logger.info(f"Parsed Data: {data}")
         
         # Extract form fields (adjust these to match your form field names)
         name = data.get('name', 'Customer')
         phone = data.get('phone', '')
-        service_type = data.get('service_type', 'Mobile')  # e.g., 'Mobile' or 'In-Studio'
-        location = data.get('location', 'Unknown Location')
+        email = data.get('email', 'No email provided')
+        service_type = data.get('service_type', 'Massage')  # e.g., 'Swedish', 'Deep Tissue', etc.
+        appointment_date = data.get('appointment_date', 'Not specified')
+        appointment_time = data.get('appointment_time', 'Not specified')
+        location = data.get('location', 'Not specified')
         notes = data.get('notes', 'No additional notes')
         
-        # Generate a unique booking ID
-        booking_id = f"book_{int(time.time())}"
+        # The form name will be used to find the provider
+        # Format is assumed to be "Dan Massage Booking Form" -> provider name is "Dan"
+        form_name = data.get('form_title', '')
+        provider_name = form_name.split(' ')[0] if form_name else ''
         
-        # Find available providers (modify this based on your provider selection logic)
-        providers = sms_manager.find_providers(location, service_type)
+        logger.info(f"Processing booking - Client: {name}, Phone: {phone}, Form: {form_name}, Provider: {provider_name}")
         
-        if not providers:
+        # Log ClickSend credentials status (without showing actual values)
+        logger.info(f"ClickSend username set: {'Yes' if os.getenv('CLICKSEND_USERNAME') else 'No'}")
+        logger.info(f"ClickSend API key set: {'Yes' if os.getenv('CLICKSEND_API_KEY') else 'No'}")
+        logger.info(f"ClickSend from number: {os.getenv('CLICKSEND_FROM_NUMBER')}")
+        
+        # Find the provider by name (exact match)
+        provider = None
+        if provider_name:
+            logger.info(f"Looking for provider: {provider_name}")
+            for p in sms_manager.providers:
+                if p['Name'].lower() == provider_name.lower():
+                    provider = p
+                    break
+        
+        if not provider:
+            error_msg = f'Provider {provider_name} not found.'
+            logger.error(error_msg)
             return jsonify({
                 'status': 'error',
-                'message': 'No providers available for the selected service/location.'
+                'message': error_msg
             }), 404
         
-        # Select the first available provider (or implement your own logic)
-        provider = providers[0]
-        provider_phone = provider.get('Phone Number')
+        provider_phone = provider.get('Phone')
+        if not provider_phone:
+            error_msg = f'No phone number found for provider {provider_name}.'
+            logger.error(error_msg)
+            return jsonify({
+                'status': 'error',
+                'message': error_msg
+            }), 400
         
-        # Send booking request to the provider
-        sms_manager.send_booking_request(
-            booking_id=booking_id,
-            client_phone=phone,
-            location=location,
-            massage_type=service_type,
-            provider_phone=provider_phone
+        logger.info(f"Found provider: {provider.get('Name')} - {provider_phone}")
+        
+        # Format the message to the provider
+        provider_msg = (
+            f"NEW BOOKING REQUEST\n"
+            f"From: {name}\n"
+            f"Phone: {phone}\n"
+            f"Email: {email}\n"
+            f"Service: {service_type}\n"
+            f"Date: {appointment_date} at {appointment_time}\n"
+            f"Location: {location}\n"
+            f"Notes: {notes}"
         )
         
-        # Optional: Send confirmation to the client
-        client_message = (
-            f"Hi {name}, we've received your booking request for {service_type} massage at {location}. "
-            f"We've notified a provider and will confirm your appointment shortly!"
-        )
-        # Uncomment to enable SMS confirmation to client
-        # send_sms(phone, client_message)
+        # Send the message to the provider
+        success, error = send_sms(provider_phone, provider_msg)
         
-        return jsonify({
-            'status': 'success',
-            'message': 'Booking request sent to provider',
-            'booking_id': booking_id,
-            'provider': provider.get('Name')
-        }), 200
-        
+        if success:
+            logger.info(f"Booking details sent to provider {provider_name}")
+            # Send confirmation to client
+            client_msg = (
+                f"Thank you for your booking request, {name}! {provider.get('Name')} has been notified "
+                f"and will contact you shortly to confirm your {service_type} appointment on {appointment_date} at {appointment_time}."
+            )
+            send_sms(phone, client_msg)
+            
+            return jsonify({
+                'status': 'success',
+                'message': 'Booking details sent to provider',
+                'provider': provider.get('Name')
+            })
+        else:
+            error_msg = f'Failed to send booking details to provider: {error}'
+            logger.error(error_msg)
+            return jsonify({
+                'status': 'error',
+                'message': error_msg
+            }), 500
+            
     except Exception as e:
+        logger.error(f"Error in webhook: {str(e)}", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': str(e)
+            'message': f'Internal server error: {str(e)}'
         }), 500
 
 @app.route('/test-sms', methods=['GET'])

@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import traceback
 from threading import Timer
 from load_providers import load_providers
 import requests
@@ -9,121 +10,71 @@ import requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ClickSend SMS config
-CLICKSEND_USERNAME = os.getenv('CLICKSEND_USERNAME', 'YOUR_CLICKSEND_USERNAME')
-CLICKSEND_API_KEY = os.getenv('CLICKSEND_API_KEY', 'YOUR_CLICKSEND_API_KEY')
-CLICKSEND_FROM_NUMBER = os.getenv('CLICKSEND_FROM_NUMBER', 'GoldTouch')  # Can be alphanumeric or phone number
-CLICKSEND_SMS_URL = "https://rest.clicksend.com/v3/sms/send"
+# TextMagic SMS config
+TEXTMAGIC_USERNAME = os.getenv('TEXTMAGIC_USERNAME')
+TEXTMAGIC_API_KEY = os.getenv('TEXTMAGIC_API_KEY')
+TEXTMAGIC_FROM = os.getenv('TEXTMAGIC_FROM', 'GoldTouch')  # Must be a verified sender ID or number
 
 # Helper to send SMS using ClickSend
 
 def send_sms(to, body, from_number=None):
-    """Send an SMS using ClickSend.
+    """Send an SMS using TextMagic.
     
     Args:
         to (str): Recipient phone number in international format (e.g., '+1234567890')
         body (str): Message content
-        from_number (str, optional): Sender ID or number. Defaults to CLICKSEND_FROM_NUMBER.
+        from_number (str, optional): Sender ID or number. Defaults to TEXTMAGIC_FROM.
         
     Returns:
-        bool: True if SMS was sent successfully, False otherwise
+        tuple: (success: bool, message: str)
     """
     logger = logging.getLogger(__name__)
-    
-    # Use provided from_number or fall back to CLICKSEND_FROM_NUMBER
-    from_number = from_number or CLICKSEND_FROM_NUMBER
-    
-    # Basic phone number validation
-    to = str(to).strip() if to else None
-    from_number = str(from_number).strip() if from_number else None
-    
-    # Basic validation - must contain at least 10 digits
-    if not to or sum(c.isdigit() for c in to) < 10:
-        error_msg = f"Invalid 'to' number format. Must contain at least 10 digits. Got: {to}"
-        logger.error(error_msg)
-        return False, error_msg
-        
-    if not from_number or sum(c.isdigit() for c in from_number) < 10:
-        error_msg = f"Invalid 'from' number format. Must contain at least 10 digits. Got: {from_number}"
-        logger.error(error_msg)
-        return False, error_msg
-    
-    logger.info(f"Preparing to send SMS - From: '{from_number}', To: '{to}', Body: '{body[:50]}...'")
-    
-    # Prevent sending to the same number (to avoid loops)
-    if to == from_number:
-        error_msg = f"Cannot send SMS: 'to' and 'from' numbers are the same: {to}"
-        logger.error(error_msg)
-        return False, error_msg
-    
-    # Validate phone numbers
-    if not to.startswith('+'):
-        error_msg = f"Invalid 'to' number format. Must start with '+'. Got: {to}"
-        logger.error(error_msg)
-        return False, error_msg
-        
-    if not (from_number.startswith('+') or from_number.isalpha()):
-        error_msg = f"Invalid 'from' number format. Must be alphanumeric or start with '+'. Got: {from_number}"
-        logger.error(error_msg)
-        return False, error_msg
-    
-    logger.info(f"Sending SMS - From: '{from_number}', To: '{to}', Body length: {len(body)} chars")
+    logger.info("=== Starting send_sms function ===")
     
     try:
-        # Prepare the payload
-        payload = {
-            "messages": [
-                {
-                    "source": "python",
-                    "from": from_number,
-                    "body": body,
-                    "to": to
-                }
-            ]
-        }
+        # Log environment variables (without sensitive values)
+        logger.info(f"TEXTMAGIC_USERNAME: {'Set' if TEXTMAGIC_USERNAME else 'Not set'}")
+        logger.info(f"TEXTMAGIC_FROM: {TEXTMAGIC_FROM}")
         
-        logger.info(f"Sending request to ClickSend - URL: {CLICKSEND_SMS_URL}")
-        logger.debug(f"Request payload: {payload}")
+        # Use provided from_number or fall back to TEXTMAGIC_FROM
+        from_number = str(from_number or TEXTMAGIC_FROM).strip()
+        to = str(to).strip() if to else None
         
-        # Make the API request
-        response = requests.post(
-            CLICKSEND_SMS_URL,
-            auth=(CLICKSEND_USERNAME, CLICKSEND_API_KEY),
-            json=payload,
-            timeout=10
+        logger.info(f"Validating phone numbers - To: {to}, From: {from_number}")
+        
+        # Basic validation - must contain at least 10 digits
+        if not to or sum(c.isdigit() for c in to) < 10:
+            error_msg = f"Invalid 'to' number format. Must contain at least 10 digits. Got: {to}"
+            logger.error(error_msg)
+            return False, error_msg
+        
+        logger.info(f"Preparing to send SMS - From: '{from_number}', To: '{to}', Body: '{body[:50]}...'")
+        
+        # Initialize TextMagic client
+        from textmagic import TextmagicRestClient
+        client = TextmagicRestClient(TEXTMAGIC_USERNAME, TEXTMAGIC_API_KEY)
+        
+        # Send the message
+        result = client.messages.create(
+            phones=to.replace('+', ''),  # TextMagic doesn't want the + in the number
+            text=body,
+            from_company=from_number if from_number.isalpha() else None,
+            from_number=from_number if from_number.startswith('+') else None
         )
         
-        logger.info(f"Received response - Status: {response.status_code}")
-        logger.debug(f"Response: {response.text}")
-        
-        # Check for HTTP errors
-        response.raise_for_status()
-        
-        # Check the response content
-        response_data = response.json()
-        if response_data.get('response_code') != 'SUCCESS':
-            error_msg = f"ClickSend API error: {response_data.get('response_msg', 'Unknown error')}"
+        # Check if the message was sent successfully
+        if hasattr(result, 'id'):
+            logger.info(f"SMS sent successfully to {to}, message ID: {result.id}")
+            return True, "Message sent successfully"
+        else:
+            error_msg = f"Failed to send SMS. Response: {result}"
             logger.error(error_msg)
             return False, error_msg
             
-        logger.info(f"SMS sent successfully to {to}")
-        return True, "Message sent successfully"
-        
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         error_msg = f"Failed to send SMS: {str(e)}"
         logger.error(error_msg)
-        
-        # Log detailed error information if available
-        if hasattr(e, 'response') and e.response is not None:
-            logger.error(f"Response status: {e.response.status_code}")
-            try:
-                error_detail = e.response.json()
-                logger.error(f"Error details: {error_detail}")
-                error_msg = f"{error_msg} - {error_detail.get('response_msg', 'No details')}"
-            except:
-                logger.error(f"Response text: {e.response.text}")
-                error_msg = f"{error_msg} - {e.response.text}"
-                
+        logger.error(traceback.format_exc())
         return False, error_msg
 
 # Booking logic class
@@ -131,78 +82,247 @@ class SMSBookingManager:
     def __init__(self, sheet_name='Massage Providers'):
         self.providers = load_providers(sheet_name)
         self.pending_requests = {}  # booking_id: timer
-        self.active_bookings = {}   # Maps provider_phone -> booking_id
+        self.active_bookings = {}   # Maps provider_phone -> booking_info
+        self.booking_attempts = {}  # booking_id: {tried_providers: [], client_info: {...}}
         logger.info(f"Initialized SMSBookingManager with {len(self.providers)} providers")
 
     def find_providers(self, location, massage_type, exclude=[]):
-        # Simple filter logic, can be improved with geolocation
-        filtered = [p for p in self.providers if p['Location'] == location and p['Type'] == massage_type and p['Phone'] not in exclude]
+        """
+        Find available providers for a given location and service type.
+        Handles providers who offer multiple service types (e.g., 'Mobile, In-Studio')
+        """
+        filtered = []
+        for p in self.providers:
+            # Skip if provider is in exclude list
+            if p['Phone'] in exclude:
+                continue
+                
+            # Check location (case-insensitive)
+            if p['Location'].lower() != location.lower():
+                continue
+                
+            # Get provider's service types (split by comma and strip whitespace)
+            provider_types = [t.strip().lower() for t in p['Type'].split(',')]
+            
+            # Check if provider offers the requested service type
+            if massage_type.lower() in provider_types:
+                filtered.append(p)
+                
+        logger.info(f"Found {len(filtered)} providers for location '{location}' and service type '{massage_type}'")
         return filtered
+        
+    def find_provider_by_name(self, name, location, service_type):
+        """Find a specific provider by name, location, and service type"""
+        name = name.lower().strip()
+        for p in self.providers:
+            if (p['Name'].lower() == name and 
+                p['Location'].lower() == location.lower() and
+                service_type.lower() in [t.strip().lower() for t in p['Type'].split(',')]):
+                return [p]
+        return []
 
-    def send_booking_request(self, booking_id, client_phone, location, massage_type, provider_phone):
+    def send_booking_request(self, booking_id, client_phone, location, massage_type, provider_phone, client_name='Client'):
         """Send a booking request to a provider and track the booking."""
         logger.info(f"Sending booking request {booking_id} to provider {provider_phone}")
         
-        # Store the booking ID for this provider
-        self.active_bookings[provider_phone] = booking_id
+        # Store the booking info for this provider
+        self.active_bookings[provider_phone] = {
+            'booking_id': booking_id,
+            'client_phone': client_phone,
+            'client_name': client_name,
+            'location': location,
+            'massage_type': massage_type,
+            'status': 'pending'
+        }
+        
+        # Get provider name for the message
+        provider_name = next((p['Name'] for p in self.providers 
+                           if p['Phone'] == provider_phone), 'Therapist')
         
         # Format the message with the booking ID for tracking
         body = (
-            f"📅 New Booking Request ({booking_id}):\n"
-            f"Location: {location}\n"
+            f"{provider_name}, you have a new booking request!\n\n"
+            f"Client: {client_name}\n"
+            f"Phone: {client_phone}\n"
             f"Service: {massage_type}\n"
-            f"Client: {client_phone}\n"
-            "\nReply YES to accept or NO to decline."
+            f"Location: {location}\n"
+            f"\n"
+            f"Reply with:\n"
+            f"YES to accept\n"
+            f"NO to decline\n"
+            f"\n"
+            f"(Booking ID: {booking_id})\n"
+            f"\nYou have 15 minutes to respond."
         )
         
-        if not send_sms(provider_phone, body):
-            logger.error(f"Failed to send booking request to {provider_phone}")
-            return False
-            
-        # Start 15 min timer for provider response
-        timer = Timer(900, self.handle_no_response, args=(booking_id, client_phone, location, massage_type, provider_phone))
-        timer.start()
-        self.pending_requests[booking_id] = timer
-        return True
-
-    def handle_provider_response(self, booking_id, provider_phone, response):
-        """Handle a provider's response to a booking request."""
-        logger.info(f"Processing response '{response}' for booking {booking_id} from {provider_phone}")
+        # Send the SMS
+        success, error = send_sms(provider_phone, body)
         
-        # Look up booking ID if not provided
-        if not booking_id and provider_phone in self.active_bookings:
-            booking_id = self.active_bookings[provider_phone]
-            logger.info(f"Found booking ID {booking_id} for provider {provider_phone}")
-        
-        if not booking_id:
-            logger.error(f"No booking ID found for provider {provider_phone}")
-            return False
+        if success:
+            # Start 15 min timer for provider response
+            timer = Timer(900, self.handle_no_response, args=(booking_id, provider_phone))
+            timer.start()
+            self.pending_requests[booking_id] = {
+                'timer': timer,
+                'provider_phone': provider_phone,
+                'attempts': 1
+            }
             
-        # Cancel the timeout timer
-        timer = self.pending_requests.pop(booking_id, None)
-        if timer:
-            timer.cancel()
-            logger.info(f"Cancelled timer for booking {booking_id}")
+            # Track this provider attempt
+            if booking_id not in self.booking_attempts:
+                self.booking_attempts[booking_id] = {
+                    'tried_providers': [],
+                    'client_info': {
+                        'phone': client_phone,
+                        'name': client_name,
+                        'service_type': massage_type,
+                        'location': location
+                    },
+                    'status': 'pending'
+                }
+            self.booking_attempts[booking_id]['tried_providers'].append(provider_phone)
             
-        # Clean up the active booking
-        if provider_phone in self.active_bookings:
-            del self.active_bookings[provider_phone]
-            
-        response = response.strip().upper()
-        if response == "YES":
-            logger.info(f"Provider {provider_phone} accepted booking {booking_id}")
-            # Confirm booking
-            send_sms(provider_phone, "Thank you! Booking confirmed.")
-            # Notify client (optional)
+            return True, None
         else:
-            # Try next provider
-            pass  # Implement fallback logic
+            logger.error(f"Failed to send booking request to {provider_phone}: {error}")
+            return False, error           
 
-    def handle_no_response(self, booking_id, client_phone, location, massage_type, provider_phone):
-        # Called if no response in 15 min
-        send_sms(provider_phone, "Thanks for getting back to us — the job was sent to another provider since we didn’t hear back in time. We’ll reach out again for future bookings!")
-        # Try next provider or notify client
-        pass
+    def handle_provider_response(self, provider_phone, response_text):
+        """Handle a provider's response to a booking request."""
+        logger.info(f"Processing response from {provider_phone}: {response_text}")
+        
+        # Get the booking info for this provider
+        if provider_phone not in self.active_bookings:
+            logger.error(f"No active booking found for provider {provider_phone}")
+            send_sms(provider_phone, "We couldn't find an active booking. Please contact support.")
+            return False
+            
+        booking_info = self.active_bookings[provider_phone]
+        booking_id = booking_info['booking_id']
+        client_phone = booking_info['client_phone']
+        client_name = booking_info['client_name']
+        location = booking_info['location']
+        massage_type = booking_info['massage_type']
+        
+        # Cancel the timeout timer
+        if booking_id in self.pending_requests:
+            self.pending_requests[booking_id]['timer'].cancel()
+            del self.pending_requests[booking_id]
+            
+        # Get provider name for messages
+        provider_name = next((p['Name'] for p in self.providers 
+                           if p['Phone'] == provider_phone), 'a therapist')
+        
+        # Process the response
+        response = response_text.strip().upper()
+        if response == 'YES':
+            # Provider accepted the booking
+            logger.info(f"Provider {provider_name} accepted booking {booking_id}")
+            
+            # Confirm to provider
+            send_sms(
+                provider_phone,
+                f"Thank you for accepting the booking!\n\n"
+                f"Client: {client_name}\n"
+                f"Phone: {client_phone}\n"
+                f"Service: {massage_type}\n"
+                f"Location: {location}\n\n"
+                f"Please contact the client to confirm the exact time and address."
+            )
+            
+            # Notify client
+            client_msg = (
+                f"Great news! {provider_name} has accepted your booking for "
+                f"{massage_type} in {location}. They'll contact you shortly to confirm details."
+            )
+            send_sms(client_phone, client_msg)
+            
+            # Update booking status
+            if booking_id in self.booking_attempts:
+                self.booking_attempts[booking_id]['status'] = 'confirmed'
+                self.booking_attempts[booking_id]['confirmed_provider'] = provider_phone
+            
+            # Clean up
+            self.cleanup_booking(booking_id, provider_phone)
+            return True
+            
+        else:
+            # Provider declined or sent an invalid response
+            logger.info(f"Provider {provider_name} declined booking {booking_id}")
+            
+            # Send acknowledgment to provider
+            send_sms(
+                provider_phone,
+                "Thank you for your response. We'll reach out for future bookings!"
+            )
+            
+            # Try to find another provider
+            self.find_next_provider(booking_id, provider_phone)
+            return False
+                
+        # If we have client info, try to find another provider
+        if client_phone and location and massage_type:
+            logger.info(f"Looking for alternative providers for declined booking {booking_id}")
+            excluded = list(self.active_bookings.keys()) + [provider_phone]
+            providers = self.find_providers(location, massage_type, exclude=excluded)
+            
+            if providers:
+                next_provider = providers[0]
+                logger.info(f"Found alternative provider: {next_provider.get('Name')} - {next_provider.get('Phone')}")
+                
+                # Store client info with the booking
+                self.active_bookings[next_provider['Phone']] = {
+                    'booking_id': booking_id,
+                    'client_phone': client_phone,
+                    'client_name': client_name,
+                    'location': location,
+                    'massage_type': massage_type,
+                    'status': 'pending'
+                }
+                
+                # Send new booking request
+                success, error = self.send_booking_request(
+                    booking_id=booking_id,
+                    client_phone=client_phone,
+                    client_name=client_name,
+                    location=location,
+                    massage_type=massage_type,
+                    provider_phone=next_provider.get('Phone')
+                )
+                
+                if not success:
+                    logger.error(f"Failed to contact next provider: {error}")
+                    # Try the next provider
+                    return self.find_next_provider(booking_id, next_provider['Phone'])
+            else:
+                # No more providers available
+                logger.info(f"No alternative providers available for booking {booking_id}")
+                send_sms(
+                    client_phone,
+                    f"We're sorry, but we couldn't find an available provider for "
+                    f"{massage_type} in {location}. Please try again later or contact us for assistance."
+                )
+
+    def handle_no_response(self, booking_id, provider_phone):
+        """Handle case when provider doesn't respond in time."""
+        logger.info(f"No response from provider {provider_phone} for booking {booking_id}")
+        
+        # Get provider name for logging
+        provider_name = next((p['Name'] for p in self.providers 
+                           if p['Phone'] == provider_phone), 'a therapist')
+        
+        # Notify the provider
+        send_sms(
+            provider_phone,
+            f"This booking request has been reassigned since we didn't hear back from you. "
+            f"We'll contact you for future opportunities."
+        )
+        
+        # Clean up the booking
+        self.cleanup_booking(booking_id, provider_phone)
+        
+        # Try the next available provider
+        self.find_next_provider(booking_id, provider_phone)
 
 # Example usage
 if __name__ == "__main__":
