@@ -447,17 +447,20 @@ def sms_webhook():
                 # Define possible conversation paths
                 greetings = ['hi', 'hello', 'hey', 'hi there', 'good morning', 'good afternoon', 'good evening']
                 
+                # Only use hardcoded responses for very simple messages
+                # For anything more complex, let the AI handle it
+                
                 # Check if it's JUST a greeting (no other words)
                 if any(clean_body == greeting for greeting in greetings):
                     response_text = "Hi there! 😊 How can I help?"
-                    
-                # Check for thanks/bye
-                elif any(word in clean_body for word in ['thank', 'thanks', 'bye', 'goodbye']):
+                
+                # Check for simple thanks/bye (exact matches only)
+                elif clean_body in ['thanks', 'thank you', 'bye', 'goodbye', 'thank you!']:
                     response_text = "You're welcome! Have a great day! 🌟"
-                    
-                # Check for yes/affirmative responses
-                elif any(word in clean_body for word in ['yes', 'yeah', 'sure', 'ok', 'yep']):
-                    response_text = "Great! You can book your appointment at goldtouchmobile.com/providers 😊"
+                
+                # For all other messages, set response_text to None to trigger AI response
+                else:
+                    response_text = None
                     
                 # Check for pricing questions
                 elif any(word in clean_body for word in ['price', 'cost', 'how much', 'rate', 'rates']):
@@ -489,8 +492,8 @@ Book at goldtouchmobile.com/providers"""
                 elif any(word in clean_body for word in ['available', 'availability', 'schedule', 'openings', 'appointment']):
                     response_text = "Yes we do! The quickest and easiest way to book is at goldtouchmobile.com/providers 😊"
                     
-                # Only use AI if no specific response was triggered
-                if 'response_text' not in locals() or response_text is None:
+                # Use AI for most responses to maintain natural conversation flow
+                if response_text is None:
                     try:
                         # System prompt with instructions and knowledge
                         system_prompt = """You are a friendly and knowledgeable massage therapist assistant for Gold Touch Massage. 
