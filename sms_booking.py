@@ -18,7 +18,7 @@ TEXTMAGIC_FROM = os.getenv('TEXTMAGIC_FROM', 'GoldTouch')  # Must be a verified 
 # Helper to send SMS using ClickSend
 
 def send_sms(to, body, from_number=None):
-    """Send an SMS using TextMagic.
+    """Send an SMS using TextMagic's API.
     
     Args:
         to (str): Recipient phone number in international format (e.g., '+1234567890')
@@ -50,23 +50,45 @@ def send_sms(to, body, from_number=None):
         
         logger.info(f"Preparing to send SMS - From: '{from_number}', To: '{to}', Body: '{body[:50]}...'")
         
-        # Initialize TextMagic client
-        import textmagic
-        client = textmagic.RestClient(TEXTMAGIC_USERNAME, TEXTMAGIC_API_KEY)
+        # Prepare the request
+        url = "https://rest.textmagic.com/api/v2/messages"
+        headers = {
+            "X-TM-Username": TEXTMAGIC_USERNAME,
+            "X-TM-Key": TEXTMAGIC_API_KEY,
+            "Content-Type": "application/json"
+        }
         
-        # Send the message
-        result = client.messages.create(
-            phones=to.replace('+', ''),  # TextMagic doesn't want the + in the number
-            text=body,
-            from_=from_number  # Use the from_ parameter for sender ID
+        # TextMagic expects phone numbers without the + sign
+        to = to.replace('+', '')
+        
+        # Prepare the payload
+        payload = {
+            "text": body,
+            "phones": to
+        }
+        
+        # Add sender ID if provided (must be alphanumeric)
+        if from_number and from_number.isalpha() and len(from_number) <= 11:
+            payload["from"] = from_number
+        
+        # Make the API request
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=10
         )
         
-        # Check if the message was sent successfully
-        if hasattr(result, 'id'):
-            logger.info(f"SMS sent successfully to {to}, message ID: {result.id}")
+        # Check the response
+        response_data = response.json()
+        logger.info(f"TextMagic API response: {response.status_code} - {response.text}")
+        
+        if response.status_code == 201:
+            message_id = response_data.get('id')
+            logger.info(f"SMS sent successfully to {to}, message ID: {message_id}")
             return True, "Message sent successfully"
         else:
-            error_msg = f"Failed to send SMS. Response: {result}"
+            error_msg = f"Failed to send SMS. Status: {response.status_code}, Response: {response.text}"
             logger.error(error_msg)
             return False, error_msg
             
