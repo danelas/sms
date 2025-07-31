@@ -437,21 +437,20 @@ def sms_webhook():
                 # Get the conversation history for this number
                 conversation_history = sms_webhook.conversation_history[from_number]
                 
-                # Keep only the last 5 messages to avoid context window issues
-                conversation_history = conversation_history[-4:]  # Keep last 2 exchanges (4 messages)
+                # Keep only the last 4 messages to avoid context window issues
+                # (2 exchanges: 1 user message + 1 assistant response)
+                conversation_history = conversation_history[-4:]
                 sms_webhook.conversation_history[from_number] = conversation_history
                 
                 # Clean the message
                 clean_body = body.lower().strip()
                 
-                # Define possible conversation paths
-                greetings = ['hi', 'hello', 'hey', 'hi there', 'good morning', 'good afternoon', 'good evening']
-                
                 # Only use hardcoded responses for very simple messages
                 # For anything more complex, let the AI handle it
+                response_text = None
                 
                 # Check if it's JUST a greeting (no other words)
-                if any(clean_body == greeting for greeting in greetings):
+                if any(clean_body == greeting.lower() for greeting in ['hi', 'hello', 'hey', 'hi there', 'good morning', 'good afternoon', 'good evening']):
                     response_text = "Hi there! 😊 How can I help?"
                 
                 # Check for simple thanks/bye (exact matches only)
@@ -512,20 +511,18 @@ def sms_webhook():
                         """
                         
                         # Build the conversation history
-                        messages = [
-                            {"role": "system", "content": system_prompt}
-                        ]
+                        messages = [{"role": "system", "content": system_prompt}]
                         
                         # Add conversation history
                         for msg in conversation_history:
                             messages.append(msg)
-                            
+                        
                         # Add the current message
                         messages.append({"role": "user", "content": body})
                         
-                        # Only keep the last 5 messages to manage context window
-                        if len(messages) > 5:
-                            messages = [messages[0]] + messages[-4:]  # Keep system prompt + last 4 messages
+                        # Keep the system prompt and the most recent exchange
+                        if len(messages) > 5:  # system + 2 exchanges (4 messages)
+                            messages = [messages[0]] + messages[-4:]
 
                         response = client.chat.completions.create(
                             model="gpt-4",
@@ -534,10 +531,15 @@ def sms_webhook():
                             temperature=0.7,  # Slightly lower temperature for more consistent responses
                         )
                         
-                        # Add the user's message and AI's response to the conversation history
+                        # Get the assistant's response
+                        assistant_response = response.choices[0].message.content.strip()
+                        
+                        # Update conversation history
                         conversation_history.append({"role": "user", "content": body})
-                        conversation_history.append({"role": "assistant", "content": response.choices[0].message.content.strip()})
-                        response_text = response.choices[0].message.content.strip()
+                        conversation_history.append({"role": "assistant", "content": assistant_response})
+                        
+                        # Update the response text
+                        response_text = assistant_response
                         logger.info(f"Generated response: {response_text}")
                     except Exception as e:
                         logger.error(f"AI response error: {str(e)}", exc_info=True)
