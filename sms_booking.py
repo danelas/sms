@@ -52,7 +52,7 @@ def send_sms(to, body, from_number=None):
         
         # Initialize TextMagic client
         import textmagic
-        client = textmagic.TextMagicClient(TEXTMAGIC_USERNAME, TEXTMAGIC_API_KEY)
+        client = textmagic.RestClient(TEXTMAGIC_USERNAME, TEXTMAGIC_API_KEY)
         
         # Send the message
         result = client.messages.create(
