@@ -458,42 +458,26 @@ def sms_webhook():
                 elif clean_body in ['thanks', 'thank you', 'bye', 'goodbye', 'thank you!']:
                     response_text = "You're welcome! Have a great day! 🌟"
                 
-                # For all other messages, set response_text to None to trigger AI response
-                else:
-                    response_text = None
-                    
                 # Check for pricing questions
                 elif any(word in clean_body for word in ['price', 'cost', 'how much', 'rate', 'rates']):
-                    response_text = """Here's our pricing:
-
-🚗 Mobile (we come to you):
-60 min — $150
-90 min — $200
-
-🏡 In-Studio:
-60 min — $120
-90 min — $170
-
-Book at goldtouchmobile.com/providers"""
-                
-                # Check for booking/questions
-                elif any(word in clean_body for word in ['book', 'schedule', 'appointment', 'available']):
-                    response_text = "Book at goldtouchmobile.com/providers 😊"
+                    response_text = """Our massage services start at $150 for 60 minutes. 
+                    You can see all our pricing and book at goldtouchmobile.com/providers 😊"""
+                    
+                # Check for service questions
+                elif any(word in clean_body for word in ['service', 'massage type', 'offer', 'swedish', 'deep tissue', 'sports', 'prenatal']):
+                    response_text = "We offer Swedish, Deep Tissue, Sports, and Prenatal massages. What type are you interested in? 😊"
                     
                 # Check for location questions
-                elif any(word in clean_body for word in ['where', 'location', 'address', 'come to', 'studio', 'based']):
-                    response_text = "We come to you! Some providers offer in-studio too. Check goldtouchmobile.com/providers"
-                    
-                # Check for services
-                elif any(word in clean_body for word in ['massage', 'service', 'swedish', 'deep tissue', 'prenatal']):
-                    response_text = "We do Swedish, deep tissue, and prenatal. What type are you interested in?"
+                elif any(word in clean_body for word in ['where', 'location', 'address', 'come to me', 'mobile', 'outcall', 'in-home']):
+                    response_text = "We offer mobile massage services where we come to you! Some providers also have in-studio options. You can see who's available at goldtouchmobile.com/providers 😊"
                     
                 # Check for availability questions
                 elif any(word in clean_body for word in ['available', 'availability', 'schedule', 'openings', 'appointment']):
                     response_text = "Yes we do! The quickest and easiest way to book is at goldtouchmobile.com/providers 😊"
                     
+                # For all other messages, set response_text to None to trigger AI response
                 # Use AI for most responses to maintain natural conversation flow
-                if response_text is None:
+                if 'response_text' not in locals() or response_text is None:
                     try:
                         # System prompt with instructions and knowledge
                         system_prompt = """You are a friendly and knowledgeable massage therapist assistant for Gold Touch Massage. 
