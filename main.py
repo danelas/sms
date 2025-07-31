@@ -428,14 +428,14 @@ def sms_webhook():
                 # Track conversation state (in a real app, you'd use a database)
                 # For now, we'll keep it simple with just the last message
                 
-                # Define possible conversation paths
-                greetings = ['hi', 'hello', 'hey', 'hi there', 'good morning', 'good afternoon', 'good evening']
-                
                 # Clean the message
                 clean_body = body.lower().strip()
                 
-                # Check if it's a greeting
-                if any(greeting in clean_body for greeting in greetings):
+                # Define possible conversation paths
+                greetings = ['hi', 'hello', 'hey', 'hi there', 'good morning', 'good afternoon', 'good evening']
+                
+                # Check if it's JUST a greeting (no other words)
+                if any(clean_body == greeting for greeting in greetings):
                     response_text = "Hi there! 😊 How can I help?"
                     
                 # Check for thanks/bye
