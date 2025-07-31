@@ -470,9 +470,8 @@ def sms_webhook():
                 elif any(word in clean_body for word in ['where', 'location', 'address', 'come to me', 'mobile', 'outcall', 'in-home']):
                     response_text = "We offer mobile massage services where we come to you! Some providers also have in-studio options. You can see who's available at goldtouchmobile.com/providers 😊"
                     
-                # Check for availability questions
-                elif any(word in clean_body for word in ['available', 'availability', 'schedule', 'openings', 'appointment']):
-                    response_text = "Yes we do! The quickest and easiest way to book is at goldtouchmobile.com/providers 😊"
+                # Remove the hardcoded availability response and let the AI handle it
+                # This allows for more natural responses to nuanced questions
                     
                 # For all other messages, set response_text to None to trigger AI response
                 # Use AI for most responses to maintain natural conversation flow
@@ -500,14 +499,18 @@ def sms_webhook():
                         2. Acknowledge any greeting before answering
                         3. Keep responses 1-3 sentences max
                         4. Use emojis occasionally to sound friendly (but don't overdo it)
-                        5. When relevant, naturally mention that they can book at goldtouchmobile.com/providers
+                        5. When relevant, naturally mention that they can check real-time availability and book at goldtouchmobile.com/providers
+                        6. Ask follow-up questions to keep the conversation going
                         7. Never sound robotic or like you're reading from a script
+                        8. For availability questions, direct them to check real-time availability on the booking page
                         
                         Example Responses:
                         - "Hi there! 😊 For the quickest booking, you can check real-time availability at goldtouchmobile.com/providers. What type of massage are you interested in?"
                         - "Hello! We'd love to help you book a massage. The easiest way is to visit goldtouchmobile.com/providers to see our available time slots. What's your preferred day and time?"
                         - "Hi! I can help with that. Our mobile massage service comes right to you - would you like to know more about our services or would you prefer to book directly at goldtouchmobile.com/providers?"
                         - "Got it! For our mobile service (where we come to you), prices start at $150 for 60 minutes. Would you like to check availability at goldtouchmobile.com/providers?"
+                        - "I'd be happy to help you book! The quickest way to see real-time availability is at goldtouchmobile.com/providers. What type of massage were you interested in?"
+                        - "Yes, we have availability! You can see all open appointments and book directly at goldtouchmobile.com/providers. What day were you thinking of?"
                         """
                         
                         # Build the conversation history
