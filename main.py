@@ -426,7 +426,20 @@ def sms_webhook():
             # Generate a dynamic response using OpenAI
             try:
                 # Track conversation state (in a real app, you'd use a database)
-                # For now, we'll keep it simple with just the last message
+                # For now, we'll use a simple in-memory dictionary
+                if not hasattr(sms_webhook, 'conversation_history'):
+                    sms_webhook.conversation_history = {}
+                
+                # Initialize conversation history for this number if it doesn't exist
+                if from_number not in sms_webhook.conversation_history:
+                    sms_webhook.conversation_history[from_number] = []
+                
+                # Get the conversation history for this number
+                conversation_history = sms_webhook.conversation_history[from_number]
+                
+                # Keep only the last 5 messages to avoid context window issues
+                conversation_history = conversation_history[-4:]  # Keep last 2 exchanges (4 messages)
+                sms_webhook.conversation_history[from_number] = conversation_history
                 
                 # Clean the message
                 clean_body = body.lower().strip()
@@ -502,7 +515,6 @@ Book at goldtouchmobile.com/providers"""
                         3. Keep responses 1-3 sentences max
                         4. Use emojis occasionally to sound friendly (but don't overdo it)
                         5. When relevant, naturally mention that they can book at goldtouchmobile.com/providers
-                        6. Ask follow-up questions to keep the conversation going
                         7. Never sound robotic or like you're reading from a script
                         
                         Example Responses:
@@ -512,18 +524,32 @@ Book at goldtouchmobile.com/providers"""
                         - "Got it! For our mobile service (where we come to you), prices start at $150 for 60 minutes. Would you like to check availability at goldtouchmobile.com/providers?"
                         """
                         
-                        # User message - just the raw input
-                        user_message = body
+                        # Build the conversation history
+                        messages = [
+                            {"role": "system", "content": system_prompt}
+                        ]
+                        
+                        # Add conversation history
+                        for msg in conversation_history:
+                            messages.append(msg)
+                            
+                        # Add the current message
+                        messages.append({"role": "user", "content": body})
+                        
+                        # Only keep the last 5 messages to manage context window
+                        if len(messages) > 5:
+                            messages = [messages[0]] + messages[-4:]  # Keep system prompt + last 4 messages
 
                         response = client.chat.completions.create(
                             model="gpt-4",
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_message}
-                            ],
+                            messages=messages,
                             max_tokens=150,
-                            temperature=0.8,  # Slightly higher temperature for more varied responses
+                            temperature=0.7,  # Slightly lower temperature for more consistent responses
                         )
+                        
+                        # Add the user's message and AI's response to the conversation history
+                        conversation_history.append({"role": "user", "content": body})
+                        conversation_history.append({"role": "assistant", "content": response.choices[0].message.content.strip()})
                         response_text = response.choices[0].message.content.strip()
                         logger.info(f"Generated response: {response_text}")
                     except Exception as e:
