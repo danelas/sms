@@ -479,39 +479,32 @@ Book at goldtouchmobile.com/providers"""
                 # Only use AI if no specific response was triggered
                 if 'response_text' not in locals() or response_text is None:
                     try:
-                        # Define prompt inside the try block
-                        prompt = f"""You're having a friendly SMS conversation for Gold Touch Massage. 
-                        The client just said: "{body}"
+                        # System prompt with instructions and knowledge
+                        system_prompt = """You are a friendly and knowledgeable massage therapist assistant for Gold Touch Massage. 
+                        Respond to customer inquiries naturally and helpfully.
                         
-                        Keep your response:
-                        - Short and sweet (1-2 sentences max)
-                        - Casual and friendly
-                        - No prices or durations
-                        - End with a question to keep the conversation going
-                        """
+                        Key Information:
+                        - For booking, direct users to goldtouchmobile.com/providers for the quickest way to see and book available appointments
+                        - Services include: Swedish, Deep tissue, Reflexology, Sports Massage, and more
+                        - Pricing (only when asked):
+                          🚗 Mobile: 60 min - $150, 90 min - $200
+                          🏡 Some independent providers offer in-studio options starting at $120 (check booking page for availability)
+                        - Gold Touch Massage doesn't have its own studio - in-studio options are only available with select independent providers
                         
-                        # Generate response using OpenAI
-                        system_prompt = """You are a friendly and knowledgeable massage therapist assistant. Use the following information to answer questions naturally in a conversational way. Don't list information unless asked, and keep responses warm and engaging.
-
-Key Information to Use Naturally:
-- Booking: Direct users to goldtouchmobile.com/providers for the quickest booking
-- Services: Swedish, Deep tissue, Reflexology, Sports Massage, and more
-- Pricing (only when specifically asked):
-  🚗 Mobile: 60 min - $150, 90 min - $200
-  🏡 Some independent providers offer in-studio options starting at $120 (check availability on booking page)
-- Important: Gold Touch Massage doesn't have its own studio - in-studio options are only available with select independent providers
-
-Keep responses:
-- Friendly and conversational
-- Include emojis when appropriate
-- End with a question when it makes sense to continue the conversation
-- Don't sound like a script - be natural and engaging"""
+                        Response Style:
+                        - Keep it short (1-2 sentences) and friendly
+                        - Use emojis when appropriate
+                        - Be helpful and answer the question directly
+                        - End with a relevant question when it makes sense"""
+                        
+                        # User message - just the raw input
+                        user_message = body
 
                         response = client.chat.completions.create(
                             model="gpt-4",
                             messages=[
                                 {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": prompt}
+                                {"role": "user", "content": user_message}
                             ],
                             max_tokens=150,
                             temperature=0.8,  # Slightly higher temperature for more varied responses
