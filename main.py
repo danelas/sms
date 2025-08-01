@@ -552,14 +552,13 @@ def sms_webhook():
                         # Update the response text
                         response_text = assistant_response
                         logger.info(f"Generated response: {response_text}")
+                        
+                        # Add a 10-second delay to make responses feel more natural
+                        time.sleep(10)
+                        
                     except Exception as e:
                         logger.error(f"AI response error: {str(e)}", exc_info=True)
-                        # More engaging default message with booking link
-                        response_text = """Hi there! 😊 Thanks for your message! 
-
-You can book a massage 24/7 at: goldtouchmobile.com/providers
-
-Or just reply with your preferred day/time and we'll help you out! 💆‍♀️✨"""
+                        response_text = "I'm having trouble processing your request. Please try again later or visit goldtouchmobile.com/providers"
                         logger.info("Using fallback response")
                         
                 logger.info(f"Generated response: {response_text}")
