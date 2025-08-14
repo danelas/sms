@@ -73,15 +73,28 @@ def clean_phone_number(number):
 # Initialize OpenAI client
 from openai import OpenAI
 
+# Get OpenAI API key from environment
 openai_api_key = os.getenv('OPENAI_API_KEY')
 if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set")
 
-# Initialize the OpenAI client
-client = OpenAI(api_key=openai_api_key)
+# Initialize the OpenAI client with the latest configuration
+client = OpenAI(
+    api_key=openai_api_key,
+    # Add organization if needed
+    # organization='org-xxx',  # Optional: Add your organization ID if using one
+)
 
 # For backward compatibility
 OPENAI_API_KEY = openai_api_key
+
+# Verify API key works
+try:
+    client.models.list()
+    logger.info("Successfully connected to OpenAI API")
+except Exception as e:
+    logger.error(f"Failed to connect to OpenAI API: {str(e)}")
+    logger.error("Please check your API key and ensure it has the correct permissions")
 
 # Root endpoint to confirm the server is running
 @app.route('/')
@@ -459,8 +472,8 @@ def sms_webhook():
                 
                 # Check for pricing questions
                 elif any(word in clean_body for word in ['price', 'cost', 'how much', 'rate', 'rates']):
-                    response_text = """Our massage services start at $150 for 60 minutes. 
-                    You can see all our pricing and book at goldtouchmobile.com/providers 😊"""
+                    response_text = """Our massage services start at $120/hour for in-studio sessions with select providers who have their own studio, and $150/hour for mobile services. 
+                    You can see all our pricing and book at goldtouchmobile.com/providers"""
                     
                 # Check for service questions
                 elif any(word in clean_body for word in ['service', 'massage type', 'offer', 'swedish', 'deep tissue', 'sports', 'prenatal']):
@@ -535,17 +548,36 @@ def sms_webhook():
                         if len(messages) > 5:  # system + 2 exchanges (4 messages)
                             messages = [messages[0]] + messages[-4:]
 
-                        response = client.chat.completions.create(
-                            model="gpt-4",
-                            messages=messages,
-                            max_tokens=150,
-                            temperature=0.7,  # Slightly lower temperature for more consistent responses
-                        )
+                        try:
+                            # First try with gpt-4
+                            response = client.chat.completions.create(
+                                model="gpt-4",
+                                messages=messages,
+                                max_tokens=150,
+                                temperature=0.7,
+                            )
+                            assistant_response = response.choices[0].message.content.strip()
+                            
+                        except Exception as e:
+                            logger.error(f"GPT-4 Error: {str(e)}")
+                            try:
+                                # Fallback to gpt-3.5-turbo if gpt-4 fails
+                                logger.info("Trying fallback to gpt-3.5-turbo")
+                                response = client.chat.completions.create(
+                                    model="gpt-3.5-turbo",
+                                    messages=messages,
+                                    max_tokens=150,
+                                    temperature=0.7,
+                                )
+                                assistant_response = response.choices[0].message.content.strip()
+                                logger.info("Successfully used gpt-3.5-turbo as fallback")
+                                
+                            except Exception as fallback_error:
+                                logger.error(f"GPT-3.5 Fallback Error: {str(fallback_error)}")
+                                # Provide a helpful fallback message
+                                assistant_response = "I'm having trouble connecting to our AI service. Please try again later or visit goldtouchmobile.com/providers for assistance."
                         
-                        # Get the assistant's response
-                        assistant_response = response.choices[0].message.content.strip()
-                        
-                        # Update conversation history
+                        # Update conversation history with the response (or fallback message)
                         conversation_history.append({"role": "user", "content": body})
                         conversation_history.append({"role": "assistant", "content": assistant_response})
                         
