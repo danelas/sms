@@ -620,9 +620,41 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                 
                 if success:
                     logger.info(f"Successfully sent response to {from_number}")
+                    
+                    # Check if this looks like a conversation ender (booking confirmation, thank you, etc.)
+                    conversation_enders = [
+                        'booked', 'confirmed', 'scheduled', 'see you', 'looking forward',
+                        'thank', 'thanks', 'welcome', 'enjoy', 'great!', 'perfect!', 'awesome!',
+                        'is that all', 'anything else', 'need anything else'
+                    ]
+                    
+                    # Check if the assistant's response indicates the conversation is ending
+                    response_lower = assistant_response.lower()
+                    is_ending = any(ender in response_lower for ender in conversation_enders)
+                    
+                    # Only send VIP promotion if conversation appears to be ending naturally
+                    if is_ending:
+                        vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
+                        try:
+                            # Add a small delay before sending the promotion
+                            time.sleep(2)
+                            send_success, send_message = send_sms(
+                                to=from_number,
+                                body=vip_message,
+                                from_number=to_number
+                            )
+                            if send_success:
+                                logger.info("Successfully sent VIP promotion message")
+                            else:
+                                logger.error(f"Failed to send VIP promotion message: {send_message}")
+                        except Exception as vip_error:
+                            logger.error(f"Error sending VIP promotion message: {str(vip_error)}")
+                    else:
+                        logger.info("Conversation appears to be ongoing, skipping VIP promotion")
+                    
                     response_data = {
                         'status': 'success',
-                        'message': 'Message processed and response sent',
+                        'message': 'Message processed and responses sent',
                         'to': from_number,
                         'from': to_number,
                         'timestamp': datetime.utcnow().isoformat()
