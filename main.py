@@ -719,8 +719,8 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                                     conv_state = CONVERSATION_STATE.get(conv_key, {})
                                     last_vip_sent = conv_state.get('last_vip_sent', 0)
                                     
-                                    # Only send VIP message if we haven't sent one in the last 24 hours
-                                    if time.time() - last_vip_sent > 86400:  # 24 hours
+                                    # Check if we've already sent the VIP message in this conversation
+                                    if not conv_state.get('vip_sent', False):
                                         vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
                                         logger.info("Conversation appears to be ending, sending VIP promotion")
                                         
@@ -734,14 +734,14 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                                         
                                         if send_success:
                                             logger.info("Successfully sent VIP promotion message")
-                                            # Update the last VIP sent time
+                                            # Mark conversation as having received VIP promotion
                                             with MESSAGE_LOCK:
                                                 if conv_key in CONVERSATION_STATE:
-                                                    CONVERSATION_STATE[conv_key]['last_vip_sent'] = time.time()
+                                                    CONVERSATION_STATE[conv_key]['vip_sent'] = True
                                         else:
                                             logger.error(f"Failed to send VIP promotion message: {send_message}")
                                     else:
-                                        logger.info("Skipping VIP promotion - already sent recently")
+                                        logger.info("VIP promotion already sent in this conversation")
                         except Exception as vip_error:
                             logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
                     else:
