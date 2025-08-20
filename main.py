@@ -225,24 +225,36 @@ def init_db():
 # Initialize database connection
 DB_CONN = init_db()
 
-def schedule_vip_message(from_number, to_number, delay_minutes=5):
+def schedule_vip_message(from_number, to_number, delay_minutes=3):
     """Schedule a VIP message to be sent after the specified delay"""
     try:
-        cursor = DB_CONN.cursor()
-        scheduled_time = datetime.now() + timedelta(minutes=delay_minutes)
+        conv_key = f"{from_number}:{to_number}"
+        logger.info(f"[VIP] Starting to schedule message for {conv_key} in {delay_minutes} minutes")
         
-        # Check if there's already a pending VIP message for this conversation
+        # Cancel any existing timer for this conversation
+        if conv_key in VIP_TIMERS:
+            logger.info(f"[VIP] Canceling existing timer for {conv_key}")
+            try:
+                VIP_TIMERS[conv_key].cancel()
+            except Exception as e:
+                logger.error(f"[VIP] Error canceling existing timer: {e}")
         
         # Create a new timer
         def send_vip():
             try:
-                logger.info(f"Sending VIP message to {from_number}")
-                send_vip_message(from_number, to_number)
+                logger.info(f"[VIP] Timer triggered for {conv_key}, sending VIP message to {from_number}")
+                success = send_vip_message(from_number, to_number)
+                if success:
+                    logger.info(f"[VIP] Successfully sent VIP message to {from_number}")
+                else:
+                    logger.error(f"[VIP] Failed to send VIP message to {from_number}")
+                
                 # Clean up the timer
                 if conv_key in VIP_TIMERS:
                     del VIP_TIMERS[conv_key]
+                    logger.info(f"[VIP] Removed timer for {conv_key}")
             except Exception as e:
-                logger.error(f"Error in VIP timer: {e}")
+                logger.error(f"[VIP] Error in VIP timer for {conv_key}: {e}", exc_info=True)
         
         # Schedule the new timer
         timer = threading.Timer(delay_minutes * 60, send_vip)
@@ -252,10 +264,11 @@ def schedule_vip_message(from_number, to_number, delay_minutes=5):
         # Store the timer
         VIP_TIMERS[conv_key] = timer
         
-        logger.info(f"Scheduled VIP message to {from_number} in {delay_minutes} minutes")
+        logger.info(f"[VIP] Successfully scheduled VIP message to {from_number} in {delay_minutes} minutes")
+        logger.info(f"[VIP] Current timers: {list(VIP_TIMERS.keys())}")
         return True
     except Exception as e:
-        logger.error(f"Error scheduling VIP message: {e}")
+        logger.error(f"[VIP] Error in schedule_vip_message: {e}", exc_info=True)
         return False
 
 def get_pending_vip_messages():
@@ -1000,7 +1013,10 @@ def send_vip_message(from_number, to_number):
     """Send the VIP message to the specified number"""
     try:
         vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
-        logger.info(f"Sending VIP message to {from_number}")
+        logger.info(f"[VIP] Attempting to send VIP message to {from_number}")
+        
+        # Log the exact message being sent
+        logger.info(f"[VIP] Message content: {vip_message}")
         
         send_success, send_message = send_sms(
             to=from_number,
@@ -1009,13 +1025,13 @@ def send_vip_message(from_number, to_number):
         )
         
         if send_success:
-            logger.info(f"Successfully sent VIP promotion message to {from_number}")
+            logger.info(f"[VIP] Successfully sent VIP promotion message to {from_number}")
             return True
         else:
-            logger.error(f"Failed to send VIP promotion message: {send_message}")
+            logger.error(f"[VIP] Failed to send VIP promotion message to {from_number}: {send_message}")
             return False
     except Exception as e:
-        logger.error(f"Error in send_vip_message: {e}")
+        logger.error(f"[VIP] Error in send_vip_message for {from_number}: {e}", exc_info=True)
         return False
 
 def process_vip_messages():
