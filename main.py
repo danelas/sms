@@ -195,12 +195,101 @@ def test_sms_endpoint():
 
 # Dictionary to track recent message IDs to prevent duplicate processing
 import threading
+import sqlite3
+import os
+from datetime import datetime, timedelta
+
+# Initialize SQLite database for persistent storage
+def init_db():
+    db_path = 'vip_messages.db'
+    new_db = not os.path.exists(db_path)
+    
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    cursor = conn.cursor()
+    
+    if new_db:
+        cursor.execute('''
+            CREATE TABLE vip_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_number TEXT NOT NULL,
+                to_number TEXT NOT NULL,
+                scheduled_time TIMESTAMP NOT NULL,
+                sent BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+    
+    return conn
+
+# Initialize database connection
+DB_CONN = init_db()
+
+def schedule_vip_message(from_number, to_number, delay_minutes=5):
+    """Schedule a VIP message to be sent after the specified delay"""
+    try:
+        cursor = DB_CONN.cursor()
+        scheduled_time = datetime.now() + timedelta(minutes=delay_minutes)
+        
+        # Check if there's already a pending VIP message for this conversation
+        cursor.execute('''
+            SELECT id FROM vip_messages 
+            WHERE from_number = ? AND to_number = ? AND sent = 0
+            ORDER BY scheduled_time DESC
+            LIMIT 1
+        ''', (from_number, to_number))
+        
+        existing = cursor.fetchone()
+        
+        if not existing:
+            cursor.execute('''
+                INSERT INTO vip_messages (from_number, to_number, scheduled_time, sent)
+                VALUES (?, ?, ?, 0)
+            ''', (from_number, to_number, scheduled_time))
+            DB_CONN.commit()
+            logger.info(f"Scheduled VIP message for {from_number} at {scheduled_time}")
+            return True
+        else:
+            logger.info(f"VIP message already scheduled for {from_number}")
+            return False
+    except Exception as e:
+        logger.error(f"Error scheduling VIP message: {e}")
+        return False
+
+def get_pending_vip_messages():
+    """Get all pending VIP messages that are due to be sent"""
+    try:
+        cursor = DB_CONN.cursor()
+        cursor.execute('''
+            SELECT id, from_number, to_number 
+            FROM vip_messages 
+            WHERE sent = 0 AND scheduled_time <= datetime('now')
+        ''')
+        return cursor.fetchall()
+    except Exception as e:
+        logger.error(f"Error getting pending VIP messages: {e}")
+        return []
+
+def mark_vip_message_sent(message_id):
+    """Mark a VIP message as sent"""
+    try:
+        cursor = DB_CONN.cursor()
+        cursor.execute('''
+            UPDATE vip_messages 
+            SET sent = 1 
+            WHERE id = ?
+        ''', (message_id,))
+        DB_CONN.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error marking VIP message as sent: {e}")
+        return False
+
+# Dictionary to track recent message IDs to prevent duplicate processing
 RECENT_MESSAGES = {}
 MESSAGE_LOCK = threading.Lock()
 
-# Dictionary to track conversation state to prevent multiple responses
-CONVERSATION_STATE = {}
-
+# Generate a unique key for message deduplication
 def get_message_key(from_number, to_number, body):
     """Generate a unique key for message deduplication"""
     return f"{from_number}:{to_number}:{body.lower().strip()}"
@@ -711,62 +800,8 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                             current_time = time.time()
                             
                             with MESSAGE_LOCK:
-                                # Initialize or update conversation state
-                                if conv_key not in CONVERSATION_STATE:
-                                    CONVERSATION_STATE[conv_key] = {
-                                        'last_activity': current_time,
-                                        'vip_sent': False,
-                                        'vip_timer': None
-                                    }
-                                    logger.info(f"Created new conversation state for {conv_key}")
-                                
-                                # Update last activity time
-                                CONVERSATION_STATE[conv_key]['last_activity'] = current_time
-                                
-                                # Cancel any existing timer
-                                if CONVERSATION_STATE[conv_key].get('vip_timer'):
-                                    try:
-                                        CONVERSATION_STATE[conv_key]['vip_timer'].cancel()
-                                        logger.info("Cancelled existing VIP timer")
-                                    except Exception as e:
-                                        logger.error(f"Error cancelling VIP timer: {e}")
-                                
-                                # Only schedule VIP if not already sent
-                                if not CONVERSATION_STATE[conv_key]['vip_sent']:
-                                    def send_vip_later():
-                                        try:
-                                            time.sleep(300)  # 5 minutes in seconds
-                                            with MESSAGE_LOCK:
-                                                # Check if we still need to send the VIP message
-                                                if (conv_key in CONVERSATION_STATE and 
-                                                    not CONVERSATION_STATE[conv_key].get('vip_sent', False)):
-                                                    
-                                                    vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
-                                                    logger.info("Sending scheduled VIP promotion after 5 minutes of inactivity")
-                                                    
-                                                    send_success, send_message = send_sms(
-                                                        to=from_number,
-                                                        body=vip_message,
-                                                        from_number=to_number
-                                                    )
-                                                    
-                                                    if send_success:
-                                                        logger.info("Successfully sent VIP promotion message")
-                                                        CONVERSATION_STATE[conv_key]['vip_sent'] = True
-                                                    else:
-                                                        logger.error(f"Failed to send VIP promotion message: {send_message}")
-                                        except Exception as e:
-                                            logger.error(f"Error in VIP timer thread: {e}")
-                                    
-                                    # Start a new timer
-                                    try:
-                                        timer = threading.Timer(300.0, send_vip_later)  # 5 minutes
-                                        timer.daemon = True
-                                        timer.start()
-                                        CONVERSATION_STATE[conv_key]['vip_timer'] = timer
-                                        logger.info("Scheduled VIP message to be sent in 5 minutes of inactivity")
-                                    except Exception as e:
-                                        logger.error(f"Error starting VIP timer: {e}")
+                                # Schedule VIP message using the database
+                                schedule_vip_message(from_number, to_number, delay_minutes=5)
                         except Exception as vip_error:
                             logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
                     else:
@@ -994,23 +1029,74 @@ def ping():
         'service': 'Gold Touch Massage SMS Service'
     }), 200
 
-# Simple uptime monitor that pings itself every 5 minutes
-import threading
-def keep_alive():
-    import urllib.request
-    import time
+def send_vip_message(from_number, to_number):
+    """Send the VIP message to the specified number"""
+    try:
+        vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
+        logger.info(f"Sending VIP message to {from_number}")
+        
+        send_success, send_message = send_sms(
+            to=from_number,
+            body=vip_message,
+            from_number=to_number
+        )
+        
+        if send_success:
+            logger.info(f"Successfully sent VIP promotion message to {from_number}")
+            return True
+        else:
+            logger.error(f"Failed to send VIP promotion message: {send_message}")
+            return False
+    except Exception as e:
+        logger.error(f"Error in send_vip_message: {e}")
+        return False
+
+def process_vip_messages():
+    """Background worker to process and send scheduled VIP messages"""
+    logger.info("VIP message worker started")
+    
     while True:
         try:
-            urllib.request.urlopen('https://sms-yd7t.onrender.com/ping')
+            # Get all pending VIP messages that are due
+            pending_messages = get_pending_vip_messages()
+            
+            for msg_id, from_number, to_number in pending_messages:
+                logger.info(f"Processing VIP message {msg_id} for {from_number}")
+                
+                # Try to send the message
+                if send_vip_message(from_number, to_number):
+                    # Mark as sent if successful
+                    mark_vip_message_sent(msg_id)
+                else:
+                    # Log error but don't mark as sent so we can retry
+                    logger.error(f"Failed to send VIP message {msg_id}, will retry")
+            
+            # Wait before checking again
+            time.sleep(30)  # Check every 30 seconds
+            
         except Exception as e:
-            logger.warning(f"Keep-alive ping failed: {e}")
-        time.sleep(300)  # 5 minutes
+            logger.error(f"Error in VIP message worker: {e}")
+            time.sleep(60)  # Wait longer on error
 
-# Start the keep-alive thread when the app starts
+# Simple uptime monitor that pings itself every 5 minutes
+def keep_alive():
+    while True:
+        try:
+            # Ping the server to keep it alive
+            requests.get('https://sms-yd7t.onrender.com/ping')
+            logger.info("Keep-alive ping sent")
+        except Exception as e:
+            logger.error(f"Error in keep-alive: {e}")
+        time.sleep(300)  # Ping every 5 minutes
+
+# Start background workers when the app starts
 if not os.environ.get('WERKZEUG_RUN_MAIN'):
+    # Start the VIP message worker
+    threading.Thread(target=process_vip_messages, daemon=True).start()
+    # Start the keep-alive thread
     threading.Thread(target=keep_alive, daemon=True).start()
 
-@app.route('/test-ai', methods=['GET'])
+{{ ... }}
 def test_ai():
     """Test endpoint to verify OpenAI connectivity"""
     try:
