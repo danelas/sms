@@ -644,8 +644,8 @@ def sms_webhook():
                         conversation_history.append({"role": "user", "content": body})
                         conversation_history.append({"role": "assistant", "content": assistant_response})
                         
-                        # Update the response text
-                        response_text = assistant_response
+                        # Clean up the response text by removing extra whitespace
+                        response_text = ' '.join(assistant_response.split())
                         logger.info(f"Generated response: {response_text}")
                         
                         # Add a 10-second delay to make responses feel more natural
@@ -721,27 +721,32 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                                     
                                     # Check if we've already sent the VIP message in this conversation
                                     if not conv_state.get('vip_sent', False):
-                                        vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
-                                        logger.info("Conversation appears to be ending, sending VIP promotion")
-                                        
-                                        # Add a small delay before sending the promotion
-                                        time.sleep(2)
-                                        send_success, send_message = send_sms(
-                                            to=from_number,
-                                            body=vip_message,
-                                            from_number=to_number
-                                        )
-                                        
-                                        if send_success:
-                                            logger.info("Successfully sent VIP promotion message")
-                                            # Mark conversation as having received VIP promotion
+                                        # Schedule VIP message to be sent after 10 minutes
+                                        def send_vip_later():
+                                            time.sleep(600)  # 10 minutes in seconds
                                             with MESSAGE_LOCK:
-                                                if conv_key in CONVERSATION_STATE:
-                                                    CONVERSATION_STATE[conv_key]['vip_sent'] = True
-                                        else:
-                                            logger.error(f"Failed to send VIP promotion message: {send_message}")
-                                    else:
-                                        logger.info("VIP promotion already sent in this conversation")
+                                                # Check again if we still haven't sent the VIP message
+                                                if conv_key in CONVERSATION_STATE and not CONVERSATION_STATE[conv_key].get('vip_sent', False):
+                                                    vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
+                                                    logger.info("Sending scheduled VIP promotion after 10 minutes")
+                                                    
+                                                    send_success, send_message = send_sms(
+                                                        to=from_number,
+                                                        body=vip_message,
+                                                        from_number=to_number
+                                                    )
+                                                    
+                                                    if send_success:
+                                                        logger.info("Successfully sent VIP promotion message")
+                                                        CONVERSATION_STATE[conv_key]['vip_sent'] = True
+                                                    else:
+                                                        logger.error(f"Failed to send VIP promotion message: {send_message}")
+                                        
+                                        # Start the timer in a separate thread
+                                        import threading
+                                        timer = threading.Thread(target=send_vip_later, daemon=True)
+                                        timer.start()
+                                        logger.info("Scheduled VIP message to be sent in 10 minutes")
                         except Exception as vip_error:
                             logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
                     else:
