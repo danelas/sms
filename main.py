@@ -194,7 +194,16 @@ def test_sms_endpoint():
     return jsonify(test_data), 200
 
 # Dictionary to track recent message IDs to prevent duplicate processing
+import threading
 RECENT_MESSAGES = {}
+MESSAGE_LOCK = threading.Lock()
+
+# Dictionary to track conversation state to prevent multiple responses
+CONVERSATION_STATE = {}
+
+def get_message_key(from_number, to_number, body):
+    """Generate a unique key for message deduplication"""
+    return f"{from_number}:{to_number}:{body.lower().strip()}"
 
 @app.route('/sms-webhook', methods=['POST', 'GET'])
 @limiter.limit("10 per minute")  # Rate limiting
@@ -209,21 +218,21 @@ def sms_webhook():
     # Generate a unique request ID
     request_id = str(uuid.uuid4())[:8]
     
+    # Log the start of request processing
+    logger.info(f"\n=== NEW REQUEST {request_id} ===")
+    
     # Clean up old message IDs (older than 5 minutes)
     current_time = time.time()
-    for msg_id in list(RECENT_MESSAGES.keys()):
-        if current_time - RECENT_MESSAGES[msg_id] > 300:  # 5 minutes
-            del RECENT_MESSAGES[msg_id]
-    
-    # Check for duplicate message
-    message_sid = request.values.get('MessageSid')
-    if message_sid and message_sid in RECENT_MESSAGES:
-        logger.info(f"Duplicate message detected: {message_sid}")
-        return jsonify({'status': 'success', 'message': 'Duplicate message, already processed'}), 200
-    
-    # Store the message ID with current timestamp
-    if message_sid:
-        RECENT_MESSAGES[message_sid] = current_time
+    with MESSAGE_LOCK:
+        # Clean up old entries
+        for msg_key in list(RECENT_MESSAGES.keys()):
+            if current_time - RECENT_MESSAGES[msg_key]['timestamp'] > 300:  # 5 minutes
+                del RECENT_MESSAGES[msg_key]
+        
+        # Clean up old conversation states
+        for conv_key in list(CONVERSATION_STATE.keys()):
+            if current_time - CONVERSATION_STATE[conv_key]['last_activity'] > 3600:  # 1 hour
+                del CONVERSATION_STATE[conv_key]
     
     # Log the raw request data first
     try:
@@ -386,6 +395,39 @@ def sms_webhook():
             logger.info(f"From: {from_number} (type: {type(from_number)})")
             logger.info(f"To: {to_number} (type: {type(to_number)})")
             logger.info(f"Body: {body} (type: {type(body)})")
+            
+            # Generate a unique key for this message
+            message_key = get_message_key(from_number, to_number, body)
+            
+            # Check for duplicate message using the lock
+            with MESSAGE_LOCK:
+                current_time = time.time()
+                
+                # Check if we've seen this exact message recently
+                if message_key in RECENT_MESSAGES:
+                    last_seen = RECENT_MESSAGES[message_key]['timestamp']
+                    if current_time - last_seen < 300:  # 5 minutes
+                        logger.info(f"Duplicate message detected (key: {message_key}), ignoring")
+                        return jsonify({
+                            'status': 'success', 
+                            'message': 'Duplicate message, already processed',
+                            'request_id': request_id
+                        }), 200
+                
+                # Store this message
+                RECENT_MESSAGES[message_key] = {
+                    'timestamp': current_time,
+                    'from': from_number,
+                    'to': to_number,
+                    'body': body
+                }
+                
+                # Update conversation state
+                CONVERSATION_STATE[f"{from_number}:{to_number}"] = {
+                    'last_activity': current_time,
+                    'last_message': body,
+                    'last_response': None
+                }
             
             # Validate required fields with more detailed error messages
             if not from_number:
@@ -642,36 +684,68 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                 if success:
                     logger.info(f"Successfully sent response to {from_number}")
                     
-                    # Check if this looks like a conversation ender (booking confirmation, thank you, etc.)
-                    conversation_enders = [
-                        'booked', 'confirmed', 'scheduled', 'see you', 'looking forward',
-                        'thank', 'thanks', 'welcome', 'enjoy', 'great!', 'perfect!', 'awesome!',
-                        'is that all', 'anything else', 'need anything else'
-                    ]
+                    # Update conversation state with the response
+                    with MESSAGE_LOCK:
+                        conv_key = f"{from_number}:{to_number}"
+                        if conv_key in CONVERSATION_STATE:
+                            CONVERSATION_STATE[conv_key].update({
+                                'last_activity': time.time(),
+                                'last_response': response_text,
+                                'last_response_time': time.time()
+                            })
                     
-                    # Check if the assistant's response indicates the conversation is ending
-                    response_lower = assistant_response.lower()
-                    is_ending = any(ender in response_lower for ender in conversation_enders)
-                    
-                    # Only send VIP promotion if conversation appears to be ending naturally
-                    if is_ending:
-                        vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
+                    # Only try to send VIP promotion if we have an assistant response
+                    if 'assistant_response' in locals() and assistant_response:
+                        # Check if this looks like a conversation ender (booking confirmation, thank you, etc.)
+                        conversation_enders = [
+                            'booked', 'confirmed', 'scheduled', 'see you', 'looking forward',
+                            'thank', 'thanks', 'welcome', 'enjoy', 'great!', 'perfect!', 'awesome!',
+                            'is that all', 'anything else', 'need anything else',
+                            'have a great day', 'goodbye', 'bye', 'take care',
+                            'you\'re welcome', 'anytime', 'cheers', 'sounds good',
+                            'got it', 'understood', 'roger that', 'will do'
+                        ]
+                        
                         try:
-                            # Add a small delay before sending the promotion
-                            time.sleep(2)
-                            send_success, send_message = send_sms(
-                                to=from_number,
-                                body=vip_message,
-                                from_number=to_number
-                            )
-                            if send_success:
-                                logger.info("Successfully sent VIP promotion message")
-                            else:
-                                logger.error(f"Failed to send VIP promotion message: {send_message}")
+                            # Check if the assistant's response indicates the conversation is ending
+                            response_lower = assistant_response.lower()
+                            is_ending = any(ender in response_lower for ender in conversation_enders)
+                            
+                            # Only send VIP promotion if conversation appears to be ending naturally
+                            if is_ending:
+                                # Check when we last sent a VIP message to this conversation
+                                conv_key = f"{from_number}:{to_number}"
+                                with MESSAGE_LOCK:
+                                    conv_state = CONVERSATION_STATE.get(conv_key, {})
+                                    last_vip_sent = conv_state.get('last_vip_sent', 0)
+                                    
+                                    # Only send VIP message if we haven't sent one in the last 24 hours
+                                    if time.time() - last_vip_sent > 86400:  # 24 hours
+                                        vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
+                                        logger.info("Conversation appears to be ending, sending VIP promotion")
+                                        
+                                        # Add a small delay before sending the promotion
+                                        time.sleep(2)
+                                        send_success, send_message = send_sms(
+                                            to=from_number,
+                                            body=vip_message,
+                                            from_number=to_number
+                                        )
+                                        
+                                        if send_success:
+                                            logger.info("Successfully sent VIP promotion message")
+                                            # Update the last VIP sent time
+                                            with MESSAGE_LOCK:
+                                                if conv_key in CONVERSATION_STATE:
+                                                    CONVERSATION_STATE[conv_key]['last_vip_sent'] = time.time()
+                                        else:
+                                            logger.error(f"Failed to send VIP promotion message: {send_message}")
+                                    else:
+                                        logger.info("Skipping VIP promotion - already sent recently")
                         except Exception as vip_error:
-                            logger.error(f"Error sending VIP promotion message: {str(vip_error)}")
+                            logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
                     else:
-                        logger.info("Conversation appears to be ongoing, skipping VIP promotion")
+                        logger.info("No assistant response available, skipping VIP promotion")
                     
                     response_data = {
                         'status': 'success',
