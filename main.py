@@ -1096,7 +1096,7 @@ if not os.environ.get('WERKZEUG_RUN_MAIN'):
     # Start the keep-alive thread
     threading.Thread(target=keep_alive, daemon=True).start()
 
-{{ ... }}
+# Test endpoint to verify OpenAI connectivity
 def test_ai():
     """Test endpoint to verify OpenAI connectivity"""
     try:
