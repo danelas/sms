@@ -289,6 +289,9 @@ def mark_vip_message_sent(message_id):
 RECENT_MESSAGES = {}
 MESSAGE_LOCK = threading.Lock()
 
+# Dictionary to track conversation state
+CONVERSATION_STATE = {}
+
 # Generate a unique key for message deduplication
 def get_message_key(from_number, to_number, body):
     """Generate a unique key for message deduplication"""
