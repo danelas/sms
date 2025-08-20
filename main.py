@@ -705,29 +705,44 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                             'got it', 'understood', 'roger that', 'will do'
                         ]
                         
-                        # Start VIP message timer if this is the first message in the conversation
+                        # Update conversation state and schedule VIP message
                         try:
                             conv_key = f"{from_number}:{to_number}"
+                            current_time = time.time()
+                            
                             with MESSAGE_LOCK:
-                                # Initialize conversation state if it doesn't exist
+                                # Initialize or update conversation state
                                 if conv_key not in CONVERSATION_STATE:
                                     CONVERSATION_STATE[conv_key] = {
-                                        'last_activity': time.time(),
-                                        'message_count': 0,
-                                        'vip_sent': False
+                                        'last_activity': current_time,
+                                        'vip_sent': False,
+                                        'vip_timer': None
                                     }
+                                    logger.info(f"Created new conversation state for {conv_key}")
                                 
-                                # Only start the timer if we haven't sent the VIP message yet
+                                # Update last activity time
+                                CONVERSATION_STATE[conv_key]['last_activity'] = current_time
+                                
+                                # Cancel any existing timer
+                                if CONVERSATION_STATE[conv_key].get('vip_timer'):
+                                    try:
+                                        CONVERSATION_STATE[conv_key]['vip_timer'].cancel()
+                                        logger.info("Cancelled existing VIP timer")
+                                    except Exception as e:
+                                        logger.error(f"Error cancelling VIP timer: {e}")
+                                
+                                # Only schedule VIP if not already sent
                                 if not CONVERSATION_STATE[conv_key]['vip_sent']:
-                                    # Only start the timer on the first message
-                                    if CONVERSATION_STATE[conv_key]['message_count'] == 0:
-                                        def send_vip_later():
+                                    def send_vip_later():
+                                        try:
                                             time.sleep(300)  # 5 minutes in seconds
                                             with MESSAGE_LOCK:
-                                                # Check again if we still haven't sent the VIP message
-                                                if conv_key in CONVERSATION_STATE and not CONVERSATION_STATE[conv_key].get('vip_sent', False):
+                                                # Check if we still need to send the VIP message
+                                                if (conv_key in CONVERSATION_STATE and 
+                                                    not CONVERSATION_STATE[conv_key].get('vip_sent', False)):
+                                                    
                                                     vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
-                                                    logger.info("Sending scheduled VIP promotion after 5 minutes")
+                                                    logger.info("Sending scheduled VIP promotion after 5 minutes of inactivity")
                                                     
                                                     send_success, send_message = send_sms(
                                                         to=from_number,
@@ -740,14 +755,18 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                                                         CONVERSATION_STATE[conv_key]['vip_sent'] = True
                                                     else:
                                                         logger.error(f"Failed to send VIP promotion message: {send_message}")
-                                        
-                                        # Start the timer in a separate thread
-                                        threading.Thread(target=send_vip_later, daemon=True).start()
-                                        logger.info("Scheduled VIP message to be sent in 5 minutes")
-                                
-                                # Update the message count and last activity time
-                                CONVERSATION_STATE[conv_key]['message_count'] += 1
-                                CONVERSATION_STATE[conv_key]['last_activity'] = time.time()
+                                        except Exception as e:
+                                            logger.error(f"Error in VIP timer thread: {e}")
+                                    
+                                    # Start a new timer
+                                    try:
+                                        timer = threading.Timer(300.0, send_vip_later)  # 5 minutes
+                                        timer.daemon = True
+                                        timer.start()
+                                        CONVERSATION_STATE[conv_key]['vip_timer'] = timer
+                                        logger.info("Scheduled VIP message to be sent in 5 minutes of inactivity")
+                                    except Exception as e:
+                                        logger.error(f"Error starting VIP timer: {e}")
                         except Exception as vip_error:
                             logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
                     else:
