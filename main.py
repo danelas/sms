@@ -232,65 +232,47 @@ def schedule_vip_message(from_number, to_number, delay_minutes=5):
         scheduled_time = datetime.now() + timedelta(minutes=delay_minutes)
         
         # Check if there's already a pending VIP message for this conversation
-        cursor.execute('''
-            SELECT id FROM vip_messages 
-            WHERE from_number = ? AND to_number = ? AND sent = 0
-            ORDER BY scheduled_time DESC
-            LIMIT 1
-        ''', (from_number, to_number))
         
-        existing = cursor.fetchone()
+        # Create a new timer
+        def send_vip():
+            try:
+                logger.info(f"Sending VIP message to {from_number}")
+                send_vip_message(from_number, to_number)
+                # Clean up the timer
+                if conv_key in VIP_TIMERS:
+                    del VIP_TIMERS[conv_key]
+            except Exception as e:
+                logger.error(f"Error in VIP timer: {e}")
         
-        if not existing:
-            cursor.execute('''
-                INSERT INTO vip_messages (from_number, to_number, scheduled_time, sent)
-                VALUES (?, ?, ?, 0)
-            ''', (from_number, to_number, scheduled_time))
-            DB_CONN.commit()
-            logger.info(f"Scheduled VIP message for {from_number} at {scheduled_time}")
-            return True
-        else:
-            logger.info(f"VIP message already scheduled for {from_number}")
-            return False
+        # Schedule the new timer
+        timer = threading.Timer(delay_minutes * 60, send_vip)
+        timer.daemon = True  # Allow program to exit even if timer is running
+        timer.start()
+        
+        # Store the timer
+        VIP_TIMERS[conv_key] = timer
+        
+        logger.info(f"Scheduled VIP message to {from_number} in {delay_minutes} minutes")
+        return True
     except Exception as e:
         logger.error(f"Error scheduling VIP message: {e}")
         return False
 
 def get_pending_vip_messages():
-    """Get all pending VIP messages that are due to be sent"""
-    try:
-        cursor = DB_CONN.cursor()
-        cursor.execute('''
-            SELECT id, from_number, to_number 
-            FROM vip_messages 
-            WHERE sent = 0 AND scheduled_time <= datetime('now')
-        ''')
-        return cursor.fetchall()
-    except Exception as e:
-        logger.error(f"Error getting pending VIP messages: {e}")
-        return []
+    """Stub for compatibility - not used with timer-based approach"""
+    return []
 
 def mark_vip_message_sent(message_id):
-    """Mark a VIP message as sent"""
-    try:
-        cursor = DB_CONN.cursor()
-        cursor.execute('''
-            UPDATE vip_messages 
-            SET sent = 1 
-            WHERE id = ?
-        ''', (message_id,))
-        DB_CONN.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Error marking VIP message as sent: {e}")
-        return False
+    """Stub for compatibility - not used with timer-based approach"""
+    return True
 
 # Dictionary to track recent message IDs to prevent duplicate processing
 RECENT_MESSAGES = {}
 MESSAGE_LOCK = threading.Lock()
 
-# Dictionary to track conversation state
+# Dictionary to track conversation state and VIP timers
 CONVERSATION_STATE = {}
+VIP_TIMERS = {}
 
 # Generate a unique key for message deduplication
 def get_message_key(from_number, to_number, body):
@@ -1050,31 +1032,10 @@ def send_vip_message(from_number, to_number):
         return False
 
 def process_vip_messages():
-    """Background worker to process and send scheduled VIP messages"""
-    logger.info("VIP message worker started")
-    
+    """Stub for compatibility - not used with timer-based approach"""
+    logger.info("VIP message worker is not used with timer-based approach")
     while True:
-        try:
-            # Get all pending VIP messages that are due
-            pending_messages = get_pending_vip_messages()
-            
-            for msg_id, from_number, to_number in pending_messages:
-                logger.info(f"Processing VIP message {msg_id} for {from_number}")
-                
-                # Try to send the message
-                if send_vip_message(from_number, to_number):
-                    # Mark as sent if successful
-                    mark_vip_message_sent(msg_id)
-                else:
-                    # Log error but don't mark as sent so we can retry
-                    logger.error(f"Failed to send VIP message {msg_id}, will retry")
-            
-            # Wait before checking again
-            time.sleep(30)  # Check every 30 seconds
-            
-        except Exception as e:
-            logger.error(f"Error in VIP message worker: {e}")
-            time.sleep(60)  # Wait longer on error
+        time.sleep(3600)  # Sleep for a long time to reduce CPU usage
 
 # Simple uptime monitor that pings itself every 5 minutes
 def keep_alive():
