@@ -313,15 +313,10 @@ def sms_webhook():
     # Clean up old message IDs (older than 5 minutes)
     current_time = time.time()
     with MESSAGE_LOCK:
-        # Clean up old entries
+        # Clean up old entries from RECENT_MESSAGES
         for msg_key in list(RECENT_MESSAGES.keys()):
             if current_time - RECENT_MESSAGES[msg_key]['timestamp'] > 300:  # 5 minutes
                 del RECENT_MESSAGES[msg_key]
-        
-        # Clean up old conversation states
-        for conv_key in list(CONVERSATION_STATE.keys()):
-            if current_time - CONVERSATION_STATE[conv_key]['last_activity'] > 3600:  # 1 hour
-                del CONVERSATION_STATE[conv_key]
     
     # Log the raw request data first
     try:
