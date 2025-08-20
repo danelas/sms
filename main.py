@@ -780,8 +780,8 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                             current_time = time.time()
                             
                             with MESSAGE_LOCK:
-                                # Schedule VIP message using the database
-                                schedule_vip_message(from_number, to_number, delay_minutes=5)
+                                # Schedule VIP message 3 minutes after the last message
+                                schedule_vip_message(from_number, to_number, delay_minutes=3)
                         except Exception as vip_error:
                             logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
                     else:
