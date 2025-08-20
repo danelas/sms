@@ -762,37 +762,24 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
                                 'last_response_time': time.time()
                             })
                     
-                    # Only try to send VIP promotion if we have an assistant response
-                    if 'assistant_response' in locals() and assistant_response:
-                        # Check if this looks like a conversation ender (booking confirmation, thank you, etc.)
-                        conversation_enders = [
-                            'booked', 'confirmed', 'scheduled', 'see you', 'looking forward',
-                            'thank', 'thanks', 'welcome', 'enjoy', 'great!', 'perfect!', 'awesome!',
-                            'is that all', 'anything else', 'need anything else',
-                            'have a great day', 'goodbye', 'bye', 'take care',
-                            'you\'re welcome', 'anytime', 'cheers', 'sounds good',
-                            'got it', 'understood', 'roger that', 'will do'
-                        ]
+                    # Always try to send VIP promotion after any response
+                    try:
+                        conv_key = f"{from_number}:{to_number}"
+                        current_time = time.time()
                         
-                        # Update conversation state and schedule VIP message
-                        try:
-                            conv_key = f"{from_number}:{to_number}"
-                            current_time = time.time()
-                            
-                            with MESSAGE_LOCK:
-                                # Schedule VIP message 3 minutes after the last message
-                                schedule_vip_message(from_number, to_number, delay_minutes=3)
-                        except Exception as vip_error:
-                            logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
-                    else:
-                        logger.info("No assistant response available, skipping VIP promotion")
+                        with MESSAGE_LOCK:
+                            # Schedule VIP message 3 minutes after the last message
+                            schedule_vip_message(from_number, to_number, delay_minutes=3)
+                            logger.info("Scheduled VIP message for 3 minutes from now")
+                    except Exception as vip_error:
+                        logger.error(f"Error in VIP promotion logic: {str(vip_error)}", exc_info=True)
                     
                     response_data = {
                         'status': 'success',
                         'message': 'Message processed and responses sent',
                         'to': from_number,
                         'from': to_number,
-                        'timestamp': datetime.utcnow().isoformat()
+                        'timestamp': datetime.now(timezone.utc).isoformat()
                     }
                     return jsonify(response_data), 200
                 else:
