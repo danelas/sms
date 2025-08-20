@@ -193,6 +193,9 @@ def test_sms_endpoint():
     }
     return jsonify(test_data), 200
 
+# Dictionary to track recent message IDs to prevent duplicate processing
+RECENT_MESSAGES = {}
+
 @app.route('/sms-webhook', methods=['POST', 'GET'])
 @limiter.limit("10 per minute")  # Rate limiting
 @limiter.limit("100 per day")   # Additional rate limit
@@ -201,8 +204,26 @@ def sms_webhook():
     import uuid
     import json
     import traceback
+    import time
     
+    # Generate a unique request ID
     request_id = str(uuid.uuid4())[:8]
+    
+    # Clean up old message IDs (older than 5 minutes)
+    current_time = time.time()
+    for msg_id in list(RECENT_MESSAGES.keys()):
+        if current_time - RECENT_MESSAGES[msg_id] > 300:  # 5 minutes
+            del RECENT_MESSAGES[msg_id]
+    
+    # Check for duplicate message
+    message_sid = request.values.get('MessageSid')
+    if message_sid and message_sid in RECENT_MESSAGES:
+        logger.info(f"Duplicate message detected: {message_sid}")
+        return jsonify({'status': 'success', 'message': 'Duplicate message, already processed'}), 200
+    
+    # Store the message ID with current timestamp
+    if message_sid:
+        RECENT_MESSAGES[message_sid] = current_time
     
     # Log the raw request data first
     try:
