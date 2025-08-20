@@ -535,8 +535,7 @@ def sms_webhook():
                 
                 # Check for pricing questions
                 elif any(word in clean_body for word in ['price', 'cost', 'how much', 'rate', 'rates']):
-                    response_text = """Our massage services start at $120/hour for in-studio sessions with select providers who have their own studio, and $150/hour for mobile services. 
-                    You can see all our pricing and book at goldtouchmobile.com/providers"""
+                    response_text = "Our massage services start at $120/hour for in-studio sessions with select providers who have their own studio, and $150/hour for mobile services. You can see all our pricing and book at goldtouchmobile.com/providers"
                     
                 # Check for service questions
                 elif any(word in clean_body for word in ['service', 'massage type', 'offer', 'swedish', 'deep tissue', 'sports', 'prenatal']):
