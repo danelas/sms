@@ -1012,7 +1012,7 @@ def ping():
 def send_vip_message(from_number, to_number):
     """Send the VIP message to the specified number"""
     try:
-        vip_message = "Also — you can unlock priority bookings + member-only perks for just $5/month. Each $5 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
+        vip_message = "Also — you can unlock priority bookings + member-only perks for just $10/month. Each $10 builds as site credit, so nothing goes to waste. goldtouchmobile.com/vip"
         logger.info(f"[VIP] Attempting to send VIP message to {from_number}")
         
         # Log the exact message being sent
