@@ -197,33 +197,318 @@ def test_sms_endpoint():
 import threading
 import sqlite3
 import os
+import uuid
+import time
 from datetime import datetime, timedelta
 
-# Initialize SQLite database for persistent storage
 def init_db():
-    db_path = 'vip_messages.db'
-    new_db = not os.path.exists(db_path)
-    
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    """Initialize the SQLite database."""
+    conn = sqlite3.connect('sms_webhook.db')
     cursor = conn.cursor()
     
-    if new_db:
-        cursor.execute('''
-            CREATE TABLE vip_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                from_number TEXT NOT NULL,
-                to_number TEXT NOT NULL,
-                scheduled_time TIMESTAMP NOT NULL,
-                sent BOOLEAN DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
+    # Create message tracking table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS message_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_number TEXT NOT NULL,
+        to_number TEXT NOT NULL,
+        body TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'received',
+        message_type TEXT DEFAULT 'inbound',
+        message_id TEXT,
+        UNIQUE(message_id) ON CONFLICT IGNORE
+    )
+    ''')
     
+    # Create table for VIP messages
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS vip_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_number TEXT NOT NULL,
+        to_number TEXT NOT NULL,
+        scheduled_time DATETIME NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        sent_at DATETIME,
+        message_text TEXT
+    )
+    ''')
+    
+    # Create table for subscriber management
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS subscribers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        phone_number TEXT UNIQUE NOT NULL,
+        is_active BOOLEAN DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_message_sent DATETIME,
+        next_message_time DATETIME,
+        opt_out_key TEXT
+    )
+    ''')
+    
+    # Create table for scheduled messages
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS scheduled_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscriber_id INTEGER,
+        message_text TEXT NOT NULL,
+        scheduled_time DATETIME NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        sent_at DATETIME,
+        FOREIGN KEY (subscriber_id) REFERENCES subscribers (id)
+    )
+    ''')
+    
+    conn.commit()
     return conn
 
 # Initialize database connection
 DB_CONN = init_db()
+
+# Message scheduling configuration
+MESSAGING_SCHEDULE = [
+    {'day': 0, 'time': '09:30', 'name': 'Day 1 (Morning)'},
+    {'day': 2, 'time': '13:00', 'name': 'Day 3 (Afternoon)'},
+    {'day': 4, 'time': '19:00', 'name': 'Day 5 (Evening)'}
+]
+
+# Message templates
+MESSAGES = {
+    'welcome': 'Welcome to Gold Touch Massage! You\'ll receive helpful reminders and updates. Reply STOP to unsubscribe at any time.',
+    'day1': '🌿 Take a moment for yourself—relaxation is waiting at Gold Touch Massage. Ready to book your next session? 💆\n👉 goldtouchmobile.com/providers\nReply STOP to opt out.',
+    'day3': '✨ Stress doesn\'t have to build up. A Gold Touch Massage helps you feel lighter, calmer, and recharged. Book your spot today:\n👉 goldtouchmobile.com/providers\nReply STOP to opt out.',
+    'day5': '🌙 Treat your body to the care it deserves. Whether it\'s tension, sore muscles, or just "me time," Gold Touch Massage has you covered. 💛\n👉 goldtouchmobile.com/providers\nReply STOP to opt out.',
+    'opt_out_confirm': 'You have been unsubscribed and will no longer receive messages. Reply START to resubscribe.',
+    'opt_in_confirm': 'You have been resubscribed to our messages. Reply STOP to unsubscribe.'
+}
+
+def add_subscriber(phone_number):
+    """Add a new subscriber or update an existing one."""
+    try:
+        cursor = DB_CONN.cursor()
+        
+        # Check if subscriber already exists
+        cursor.execute('SELECT id, is_active FROM subscribers WHERE phone_number = ?', (phone_number,))
+        subscriber = cursor.fetchone()
+        
+        if subscriber:
+            # Reactivate if previously unsubscribed
+            if not subscriber[1]:  # is_active is False
+                cursor.execute('''
+                    UPDATE subscribers 
+                    SET is_active = 1, 
+                        opt_out_key = NULL,
+                        next_message_time = datetime(CURRENT_TIMESTAMP, '+1 day')
+                    WHERE id = ?
+                ''', (subscriber[0],))
+                DB_CONN.commit()
+                return {'status': 'reactivated', 'subscriber_id': subscriber[0]}
+            return {'status': 'exists', 'subscriber_id': subscriber[0]}
+        
+        # Add new subscriber
+        cursor.execute('''
+            INSERT INTO subscribers (phone_number, next_message_time, opt_out_key)
+            VALUES (?, datetime(CURRENT_TIMESTAMP, '+1 day'), ?)
+        ''', (phone_number, os.urandom(16).hex()))
+        subscriber_id = cursor.lastrowid
+        DB_CONN.commit()
+        
+        # Schedule welcome message immediately
+        schedule_message(subscriber_id, 'welcome', 'immediate')
+        
+        # Schedule all three messages in sequence
+        now = datetime.now()
+        for i, schedule in enumerate(MESSAGING_SCHEDULE):
+            # Calculate days to add (0 for first, 2 for second, 4 for third)
+            days_to_add = schedule['day'] - now.weekday()
+            if days_to_add < 0:
+                days_to_add += 7  # Move to next week if needed
+                
+            # Calculate exact time
+            scheduled_time = now + timedelta(days=days_to_add)
+            scheduled_time = scheduled_time.replace(
+                hour=int(schedule['time'].split(':')[0]),
+                minute=int(schedule['time'].split(':')[1]),
+                second=0,
+                microsecond=0
+            )
+            
+            # Schedule the message
+            schedule_message(
+                subscriber_id,
+                f'day{schedule["day"]+1}',
+                scheduled_time
+            )
+        
+        return {'status': 'added', 'subscriber_id': cursor.lastrowid}
+        
+    except Exception as e:
+        logger.error(f"Error adding subscriber {phone_number}: {str(e)}")
+        DB_CONN.rollback()
+        return {'status': 'error', 'message': str(e)}
+
+def unsubscribe(phone_number):
+    """Unsubscribe a phone number from messages."""
+    try:
+        cursor = DB_CONN.cursor()
+        cursor.execute('''
+            UPDATE subscribers 
+            SET is_active = 0,
+                next_message_time = NULL
+            WHERE phone_number = ?
+        ''', (phone_number,))
+        DB_CONN.commit()
+        
+        if cursor.rowcount > 0:
+            return {'status': 'unsubscribed'}
+        return {'status': 'not_found'}
+        
+    except Exception as e:
+        logger.error(f"Error unsubscribing {phone_number}: {str(e)}")
+        DB_CONN.rollback()
+        return {'status': 'error', 'message': str(e)}
+
+def schedule_message(subscriber_id, message_key='welcome', when='next_scheduled'):
+    """
+    Schedule a message to be sent.
+    
+    Args:
+        subscriber_id: ID of the subscriber
+        message_key: Key from MESSAGES dict for the message to send
+        when: 'immediate', 'next_scheduled', or a specific datetime
+    """
+    try:
+        cursor = DB_CONN.cursor()
+        
+        if when == 'immediate':
+            scheduled_time = datetime.now()
+            message_text = MESSAGES[message_key]
+        elif when == 'next_scheduled':
+            now = datetime.now()
+            current_weekday = now.weekday()
+            current_time = now.strftime('%H:%M')
+            
+            # Find the next scheduled message in the sequence
+            next_schedule = None
+            days_to_add = 0
+            
+            # Try to find next schedule in current week
+            for schedule in MESSAGING_SCHEDULE:
+                if schedule['day'] > current_weekday or \
+                   (schedule['day'] == current_weekday and schedule['time'] > current_time):
+                    days_to_add = schedule['day'] - current_weekday
+                    next_schedule = schedule
+                    break
+            
+            # If no more schedules this week, get first schedule of next week
+            if not next_schedule:
+                days_to_add = (7 - current_weekday) + MESSAGING_SCHEDULE[0]['day']
+                next_schedule = MESSAGING_SCHEDULE[0]
+            
+            # Calculate the next scheduled time
+            next_date = now + timedelta(days=days_to_add)
+            scheduled_time = datetime.strptime(
+                f"{next_date.strftime('%Y-%m-%d')} {next_schedule['time']}",
+                '%Y-%m-%d %H:%M'
+            )
+            
+            # Get the appropriate message based on the schedule
+            message_text = MESSAGES.get(f'day{next_schedule["day"]+1}', MESSAGES['welcome'])
+        else:
+            # When is a specific datetime
+            scheduled_time = when
+            message_text = MESSAGES.get(message_key, MESSAGES['welcome'])
+        
+        # Schedule the message
+        cursor.execute('''
+            INSERT INTO scheduled_messages 
+            (subscriber_id, message_text, scheduled_time)
+            VALUES (?, ?, ?)
+        ''', (subscriber_id, message_text, scheduled_time))
+        
+        # Update next message time for subscriber
+        cursor.execute('''
+            UPDATE subscribers 
+            SET next_message_time = ?,
+                last_message_sent = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (scheduled_time, subscriber_id))
+        
+        DB_CONN.commit()
+        return {'status': 'scheduled', 'scheduled_time': scheduled_time}
+        
+    except Exception as e:
+        logger.error(f"Error scheduling message: {str(e)}")
+        DB_CONN.rollback()
+        return {'status': 'error', 'message': str(e)}
+
+def process_scheduled_messages():
+    """Process and send all scheduled messages that are due."""
+    try:
+        cursor = DB_CONN.cursor()
+        
+        # Get all pending messages that are due
+        cursor.execute('''
+            SELECT m.id, s.phone_number, m.message_text
+            FROM scheduled_messages m
+            JOIN subscribers s ON m.subscriber_id = s.id
+            WHERE m.status = 'pending'
+            AND m.scheduled_time <= datetime('now')
+            AND s.is_active = 1
+            LIMIT 100  # Process in batches of 100
+        ''')
+        
+        messages = cursor.fetchall()
+        sent_count = 0
+        
+        for msg_id, phone_number, message_text in messages:
+            try:
+                # Send the message using your existing send_sms function
+                result = send_sms(
+                    to_number=phone_number,
+                    message=message_text,
+                    is_reminder=True
+                )
+                
+                if result.get('success'):
+                    # Mark as sent
+                    cursor.execute('''
+                        UPDATE scheduled_messages 
+                        SET status = 'sent',
+                            sent_at = datetime('now')
+                        WHERE id = ?
+                    ''', (msg_id,))
+                    sent_count += 1
+                else:
+                    # Mark as failed
+                    cursor.execute('''
+                        UPDATE scheduled_messages 
+                        SET status = 'failed'
+                        WHERE id = ?
+                    ''', (msg_id,))
+                    
+            except Exception as e:
+                logger.error(f"Error processing message {msg_id}: {str(e)}")
+                # Mark as error
+                cursor.execute('''
+                    UPDATE scheduled_messages 
+                    SET status = 'error'
+                    WHERE id = ?
+                ''', (msg_id,))
+        
+        DB_CONN.commit()
+        logger.info(f"Processed {len(messages)} scheduled messages, {sent_count} sent successfully")
+        return {'status': 'completed', 'processed': len(messages), 'sent': sent_count}
+        logger.info(f"Processed {len(messages)} scheduled messages, {sent_count} sent successfully")
+        return {'status': 'completed', 'processed': len(messages), 'sent': sent_count}
+        
+    except Exception as e:
+        logger.error(f"Error in process_scheduled_messages: {str(e)}")
+        DB_CONN.rollback()
+        return {'status': 'error', 'message': str(e)}
 
 def schedule_vip_message(from_number, to_number, delay_minutes=3):
     """Schedule a VIP message to be sent after the specified delay"""
@@ -1051,10 +1336,25 @@ def keep_alive():
             logger.error(f"Error in keep-alive: {e}")
         time.sleep(300)  # Ping every 5 minutes
 
+def message_scheduler_worker():
+    """Background worker to process scheduled messages."""
+    logger.info("Starting message scheduler worker")
+    while True:
+        try:
+            process_scheduled_messages()
+            time.sleep(60)  # Check every minute
+        except Exception as e:
+            logger.error(f"Error in message scheduler worker: {str(e)}")
+            time.sleep(60)  # Wait before retrying
+
 # Start background workers when the app starts
 if not os.environ.get('WERKZEUG_RUN_MAIN'):
     # Start the VIP message worker
     threading.Thread(target=process_vip_messages, daemon=True).start()
+    
+    # Start the message scheduler worker
+    threading.Thread(target=message_scheduler_worker, daemon=True).start()
+    
     # Start the keep-alive thread
     threading.Thread(target=keep_alive, daemon=True).start()
 
