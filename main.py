@@ -475,7 +475,7 @@ def process_scheduled_messages():
             WHERE m.status = 'pending'
             AND m.scheduled_time <= datetime('now')
             AND s.is_active = 1
-            LIMIT 100  # Process in batches of 100
+            LIMIT 100  -- Process in batches of 100
         ''')
         
         messages = cursor.fetchall()
