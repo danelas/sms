@@ -3,16 +3,17 @@ import json
 import time
 import logging
 import openai
-from flask import Flask, request, jsonify, render_template, redirect, url_for
+from flask import Flask, request, jsonify, render_template, redirect, url_for, Response
 from flask_cors import CORS
-from datetime import datetime, timedelta
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from functools import wraps
 import pytz
 import requests
 from dotenv import load_dotenv
 from sms_booking import SMSBookingManager, send_sms
 import re
 import traceback
-from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 # Load environment variables from .env file
@@ -31,6 +32,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Admin credentials (in production, use environment variables or a more secure method)
+ADMIN_USERNAME = 'admin'
+ADMIN_PASSWORD = 'admin123'  # Change this in production
+
+def check_auth(username, password):
+    """Check if a username/password combination is valid."""
+    return username == ADMIN_USERNAME and password == ADMIN_PASSWORD
+
+def requires_auth(f):
+    """Decorator to require HTTP Basic Auth."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return Response(
+                'Could not verify your access level for that URL.\n'
+                'You have to login with proper credentials', 401,
+                {'WWW-Authenticate': 'Basic realm="Login Required"'})
+        return f(*args, **kwargs)
+    return decorated
+
 CORS(app)  # Enable CORS for all routes
 
 # Rate limiting
@@ -1300,6 +1323,50 @@ def test_webhook():
     
     # Return the response
     return jsonify(response_data), 200
+
+@app.route('/admin/subscribers')
+@requires_auth
+def view_subscribers():
+    """Admin endpoint to view all subscribers and their scheduled messages."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get subscribers
+        cursor.execute('''
+            SELECT id, phone_number, is_active, created_at, 
+                   last_message_sent, next_message_time
+            FROM subscribers
+            ORDER BY created_at DESC
+        ''')
+        subscribers = cursor.fetchall()
+        
+        # Get scheduled messages
+        cursor.execute('''
+            SELECT m.id, s.phone_number, m.message_text, 
+                   m.scheduled_time, m.status, m.sent_at
+            FROM scheduled_messages m
+            JOIN subscribers s ON m.subscriber_id = s.id
+            ORDER BY m.scheduled_time DESC
+            LIMIT 50
+        ''')
+        messages = cursor.fetchall()
+        
+        # Format the response
+        response = {
+            'subscribers': [dict(zip([column[0] for column in cursor.description], row)) 
+                          for row in subscribers],
+            'scheduled_messages': [dict(zip([column[0] for column in cursor.description], row)) 
+                                for row in messages]
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 # Test endpoint to verify webhook connectivity (GET request for browser testing)
 # Keep-alive endpoint for uptime monitoring
