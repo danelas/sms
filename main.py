@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Admin credentials (in production, use environment variables or a more secure method)
-ADMIN_USERNAME = 'admin'
-ADMIN_PASSWORD = 'admin123'  # Change this in production
+ADMIN_USERNAME = 'dandushe'
+ADMIN_PASSWORD = 'Bd185678!'  # Change this in production
 
 def check_auth(username, password):
     """Check if a username/password combination is valid."""
