@@ -203,7 +203,7 @@ from datetime import datetime, timedelta
 
 def init_db():
     """Initialize the SQLite database."""
-    conn = sqlite3.connect('sms_webhook.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Create message tracking table
@@ -265,8 +265,21 @@ def init_db():
     conn.commit()
     return conn
 
-# Initialize database connection
-DB_CONN = init_db()
+# Thread-local storage for database connections
+import threading
+thread_local = threading.local()
+
+def get_db_connection():
+    """Get a thread-local database connection."""
+    if not hasattr(thread_local, 'db_connection'):
+        thread_local.db_connection = sqlite3.connect('sms_webhook.db')
+        # Enable foreign key support
+        thread_local.db_connection.execute('PRAGMA foreign_keys = ON')
+    return thread_local.db_connection
+
+# Initialize database tables on startup
+with get_db_connection() as conn:
+    init_db()
 
 # Message scheduling configuration
 MESSAGING_SCHEDULE = [
@@ -288,7 +301,8 @@ MESSAGES = {
 def add_subscriber(phone_number):
     """Add a new subscriber or update an existing one."""
     try:
-        cursor = DB_CONN.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
         # Check if subscriber already exists
         cursor.execute('SELECT id, is_active FROM subscribers WHERE phone_number = ?', (phone_number,))
@@ -304,7 +318,7 @@ def add_subscriber(phone_number):
                         next_message_time = datetime(CURRENT_TIMESTAMP, '+1 day')
                     WHERE id = ?
                 ''', (subscriber[0],))
-                DB_CONN.commit()
+                conn.commit()
                 return {'status': 'reactivated', 'subscriber_id': subscriber[0]}
             return {'status': 'exists', 'subscriber_id': subscriber[0]}
         
@@ -314,7 +328,7 @@ def add_subscriber(phone_number):
             VALUES (?, datetime(CURRENT_TIMESTAMP, '+1 day'), ?)
         ''', (phone_number, os.urandom(16).hex()))
         subscriber_id = cursor.lastrowid
-        DB_CONN.commit()
+        conn.commit()
         
         # Schedule welcome message immediately
         schedule_message(subscriber_id, 'welcome', 'immediate')
@@ -347,20 +361,21 @@ def add_subscriber(phone_number):
         
     except Exception as e:
         logger.error(f"Error adding subscriber {phone_number}: {str(e)}")
-        DB_CONN.rollback()
+        conn.rollback()
         return {'status': 'error', 'message': str(e)}
 
 def unsubscribe(phone_number):
     """Unsubscribe a phone number from messages."""
     try:
-        cursor = DB_CONN.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
         cursor.execute('''
             UPDATE subscribers 
             SET is_active = 0,
                 next_message_time = NULL
             WHERE phone_number = ?
         ''', (phone_number,))
-        DB_CONN.commit()
+        conn.commit()
         
         if cursor.rowcount > 0:
             return {'status': 'unsubscribed'}
@@ -368,7 +383,7 @@ def unsubscribe(phone_number):
         
     except Exception as e:
         logger.error(f"Error unsubscribing {phone_number}: {str(e)}")
-        DB_CONN.rollback()
+        conn.rollback()
         return {'status': 'error', 'message': str(e)}
 
 def schedule_message(subscriber_id, message_key='welcome', when='next_scheduled'):
@@ -381,7 +396,8 @@ def schedule_message(subscriber_id, message_key='welcome', when='next_scheduled'
         when: 'immediate', 'next_scheduled', or a specific datetime
     """
     try:
-        cursor = DB_CONN.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
         if when == 'immediate':
             scheduled_time = datetime.now()
@@ -437,18 +453,19 @@ def schedule_message(subscriber_id, message_key='welcome', when='next_scheduled'
             WHERE id = ?
         ''', (scheduled_time, subscriber_id))
         
-        DB_CONN.commit()
+        conn.commit()
         return {'status': 'scheduled', 'scheduled_time': scheduled_time}
         
     except Exception as e:
         logger.error(f"Error scheduling message: {str(e)}")
-        DB_CONN.rollback()
+        conn.rollback()
         return {'status': 'error', 'message': str(e)}
 
 def process_scheduled_messages():
     """Process and send all scheduled messages that are due."""
     try:
-        cursor = DB_CONN.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
         # Get all pending messages that are due
         cursor.execute('''
@@ -499,7 +516,7 @@ def process_scheduled_messages():
                     WHERE id = ?
                 ''', (msg_id,))
         
-        DB_CONN.commit()
+        conn.commit()
         logger.info(f"Processed {len(messages)} scheduled messages, {sent_count} sent successfully")
         return {'status': 'completed', 'processed': len(messages), 'sent': sent_count}
         logger.info(f"Processed {len(messages)} scheduled messages, {sent_count} sent successfully")
@@ -507,7 +524,7 @@ def process_scheduled_messages():
         
     except Exception as e:
         logger.error(f"Error in process_scheduled_messages: {str(e)}")
-        DB_CONN.rollback()
+        conn.rollback()
         return {'status': 'error', 'message': str(e)}
 
 def schedule_vip_message(from_number, to_number, delay_minutes=3):
