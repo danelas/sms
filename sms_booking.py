@@ -3,8 +3,12 @@ import time
 import logging
 import traceback
 from threading import Timer
+from dotenv import load_dotenv
 from load_providers import load_providers
 import requests
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -14,6 +18,11 @@ logger = logging.getLogger(__name__)
 TEXTMAGIC_USERNAME = os.getenv('TEXTMAGIC_USERNAME')
 TEXTMAGIC_API_KEY = os.getenv('TEXTMAGIC_API_KEY')
 TEXTMAGIC_FROM = os.getenv('TEXTMAGIC_FROM', 'GoldTouch')  # Must be a verified sender ID or number
+
+# Verify environment variables are loaded
+logger.info(f"TEXTMAGIC_USERNAME: {'Set' if TEXTMAGIC_USERNAME else 'Not set'}")
+logger.info(f"TEXTMAGIC_API_KEY: {'Set' if TEXTMAGIC_API_KEY else 'Not set'}")
+logger.info(f"TEXTMAGIC_FROM: {TEXTMAGIC_FROM}")
 
 # Helper to send SMS using ClickSend
 
