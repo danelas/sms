@@ -47,27 +47,42 @@ def clean_phone_number(number):
         number: The phone number to validate
         
     Returns:
-        str: The original number if valid, None if invalid
+        str: The cleaned number if valid, None if invalid
     """
     if not number:
         logger.warning("No phone number provided")
         return None
         
     try:
-        # Convert to string and strip whitespace
-        number_str = str(number).strip()
+        # Convert to string and strip whitespace and any non-digit characters
+        number_str = ''.join(c for c in str(number) if c.isdigit())
         
-        # Basic validation - must contain at least 10 digits
-        digits = sum(c.isdigit() for c in number_str)
-        if digits < 10:
-            logger.warning(f"Phone number too short: {number_str}")
+        if not number_str:
+            logger.warning("No digits found in phone number")
             return None
             
-        logger.info(f"Using phone number as-is: {number_str}")
-        return number_str
+        # Accept numbers with 9-15 digits (standard phone numbers are 10-15 digits, 
+        # but we'll allow 9 for special cases)
+        if len(number_str) < 9 or len(number_str) > 15:
+            logger.warning(f"Phone number has invalid length ({len(number_str)} digits): {number_str}")
+            return None
+            
+        # For numbers starting with a country code, ensure it's properly formatted
+        if number_str.startswith('1') and len(number_str) == 11:
+            # US/Canada number with country code
+            cleaned_number = number_str
+        elif len(number_str) >= 10:
+            # Standard 10-digit number, assume US/Canada
+            cleaned_number = number_str[-10:]  # Take last 10 digits
+        else:
+            # For 9-digit numbers (special case)
+            cleaned_number = number_str
+            
+        logger.info(f"Cleaned phone number: {number_str} -> {cleaned_number}")
+        return cleaned_number
         
     except Exception as e:
-        logger.error(f"Error validating phone number '{number}': {str(e)}")
+        logger.error(f"Error validating phone number '{number}': {str(e)}", exc_info=True)
         return None
 
 # Initialize OpenAI client
