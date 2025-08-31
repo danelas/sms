@@ -886,6 +886,103 @@ def test_sms():
             'message': f'Error: {str(e)}'
         }), 500
 
+@app.route('/hubspot-webhook', methods=['POST', 'GET'])
+@limiter.limit("100 per hour")  # Rate limiting for webhook
+@limiter.limit("1000 per day")
+def hubspot_webhook():
+    """
+    Handle HubSpot webhook events
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Log the incoming request for debugging
+    logger.info("\n=== HUBSPOT WEBHOOK RECEIVED ===")
+    logger.info(f"Method: {request.method}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    
+    # Handle webhook verification (HubSpot sends a GET request to verify the endpoint)
+    if request.method == 'GET':
+        hubspot_challenge = request.args.get('hub.challenge')
+        if hubspot_challenge:
+            logger.info("HubSpot webhook verification successful")
+            return hubspot_challenge, 200, {'Content-Type': 'text/plain'}
+        return "Webhook verification failed", 400
+    
+    # Handle webhook events (POST request)
+    try:
+        # Get the webhook payload
+        payload = request.json
+        logger.info(f"Webhook payload: {json.dumps(payload, indent=2)}")
+        
+        # Verify the webhook signature (if configured)
+        if not verify_hubspot_signature(request):
+            logger.warning("Invalid webhook signature")
+            return jsonify({'status': 'error', 'message': 'Invalid signature'}), 401
+        
+        # Process the webhook event
+        event_type = payload.get('subscriptionType')
+        
+        if event_type == 'contact.creation':
+            # Handle contact creation event
+            contact_id = payload.get('objectId')
+            logger.info(f"New contact created in HubSpot: {contact_id}")
+            
+            # Here you can add logic to handle the new contact
+            # For example, send a welcome message or update internal systems
+            
+            return jsonify({'status': 'success', 'message': 'Webhook processed'}), 200
+            
+        else:
+            logger.info(f"Unhandled webhook event type: {event_type}")
+            return jsonify({'status': 'success', 'message': 'Event type not handled'}), 200
+            
+    except Exception as e:
+        error_msg = f"Error processing webhook: {str(e)}"
+        logger.error(f"{error_msg}\n{traceback.format_exc()}")
+        return jsonify({'status': 'error', 'message': error_msg}), 500
+
+def verify_hubspot_signature(request) -> bool:
+    """
+    Verify the HubSpot webhook signature
+    
+    Args:
+        request: The Flask request object
+        
+    Returns:
+        bool: True if signature is valid, False otherwise
+    """
+    client_secret = os.getenv('HUBSPOT_CLIENT_SECRET')
+    if not client_secret:
+        logger.warning("No HUBSPOT_CLIENT_SECRET configured, skipping signature verification")
+        return True  # Skip verification if no secret is configured
+    
+    signature = request.headers.get('X-HubSpot-Signature')
+    if not signature:
+        logger.warning("No X-HubSpot-Signature header found")
+        return False
+    
+    # Get the request body as bytes for signature verification
+    request_data = request.get_data()
+    
+    try:
+        # Verify the signature using HMAC-SHA256
+        import hmac
+        import hashlib
+        
+        # Create a new hash of the request body using the client secret
+        expected_signature = hmac.new(
+            client_secret.encode('utf-8'),
+            request_data,
+            hashlib.sha256
+        ).hexdigest()
+        
+        # Compare the signatures
+        return hmac.compare_digest(signature, expected_signature)
+        
+    except Exception as e:
+        logger.error(f"Error verifying webhook signature: {str(e)}")
+        return False
+
 # Test endpoint to verify webhook is working
 @app.route('/test-webhook', methods=['GET', 'POST'])
 def test_webhook():
