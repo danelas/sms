@@ -5,7 +5,7 @@ import logging
 import openai
 from flask import Flask, request, jsonify, render_template, redirect, url_for
 from flask_cors import CORS
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pytz
 import requests
 from dotenv import load_dotenv
@@ -198,7 +198,7 @@ def test_sms_endpoint():
 import threading
 import sqlite3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Initialize SQLite database for persistent storage
 def init_db():

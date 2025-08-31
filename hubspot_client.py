@@ -31,12 +31,12 @@ class HubSpotClient:
                                email: Optional[str] = None, 
                                properties: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
         """
-        Create or update a contact in HubSpot
+        Create or update a contact in HubSpot with just a phone number
         
         Args:
-            phone_number: The contact's phone number
-            name: Optional contact name
-            email: Optional contact email
+            phone_number: The contact's phone number (required)
+            name: Optional contact name (not required)
+            email: Optional contact email (not required)
             properties: Additional contact properties
             
         Returns:
@@ -45,15 +45,25 @@ class HubSpotClient:
         if not self.access_token:
             return False, "HubSpot access token not configured"
         
-        # Prepare contact data for HubSpot
+        # Clean and validate phone number
+        if not phone_number or not isinstance(phone_number, str) or len(phone_number.strip()) < 10:
+            return False, "Invalid phone number"
+            
+        # Generate a unique email if none provided using phone number
+        if not email or not isinstance(email, str) or '@' not in email:
+            email = f"sms-{phone_number.strip('+').replace(' ', '')}@sms.goldtouchmobile.com"
+            
+        # Prepare basic contact data for HubSpot
         contact_data = {
             'properties': {
-                'phone': phone_number,
-                'firstname': name.split(' ')[0] if name else '',
-                'lastname': ' '.join(name.split(' ')[1:]) if name and ' ' in name else '',
-                'email': email or '',
+                'phone': phone_number.strip(),
+                'email': email,
+                'firstname': name.split(' ')[0] if name else 'SMS',
+                'lastname': ' '.join(name.split(' ')[1:]) if name and ' ' in name else 'Contact',
                 'hs_lead_status': 'SMS_LEAD',
-                'lifecyclestage': 'lead',
+                'lifecyclestage': 'subscriber',
+                'lead_source': 'SMS Subscription',
+                'hs_analytics_source': 'SMS',
                 **(properties or {})
             }
         }
@@ -63,7 +73,7 @@ class HubSpotClient:
             search_url = f"{self.base_url}/crm/{self.api_version}/objects/contacts/search"
             headers = self._get_headers()
             
-            # Search by phone
+            # First try to find by phone number (exact match)
             search_payload = {
                 "filterGroups": [
                     {
@@ -71,11 +81,13 @@ class HubSpotClient:
                             {
                                 "propertyName": "phone",
                                 "operator": "EQ",
-                                "value": phone_number
+                                "value": phone_number.strip()
                             }
                         ]
                     }
-                ]
+                ],
+                "properties": ["email", "phone", "firstname", "lastname", "hs_object_id"],
+                "limit": 1
             }
             
             response = requests.post(
@@ -86,16 +98,40 @@ class HubSpotClient:
             )
             
             if response.status_code == 200 and response.json().get('results'):
-                # Contact exists, update it
-                contact_id = response.json()['results'][0]['id']
+                # Contact exists, update it with only the properties we want to change
+                existing_contact = response.json()['results'][0]
+                contact_id = existing_contact['id']
                 update_url = f"{self.base_url}/crm/{self.api_version}/objects/contacts/{contact_id}"
                 
-                response = requests.patch(
-                    update_url,
-                    headers=headers,
-                    json=contact_data,
-                    timeout=10
-                )
+                # Prepare update data - only include properties that are different
+                update_data = {'properties': {}}
+                
+                # Only update name if we have a new name and the existing one is a default
+                existing_name = f"{existing_contact.get('properties', {}).get('firstname', '')} {existing_contact.get('properties', {}).get('lastname', '')}".strip()
+                if name and (not existing_name or existing_name in ['SMS Contact', 'SMS', 'Contact']):
+                    update_data['properties']['firstname'] = name.split(' ')[0]
+                    if ' ' in name:
+                        update_data['properties']['lastname'] = ' '.join(name.split(' ')[1:])
+                
+                # Only update email if it's a generated one or missing
+                existing_email = existing_contact.get('properties', {}).get('email', '')
+                if '@sms.goldtouchmobile.com' in existing_email or not existing_email:
+                    update_data['properties']['email'] = contact_data['properties']['email']
+                
+                # Add any additional properties that were passed in
+                if properties:
+                    for key, value in properties.items():
+                        if key not in update_data['properties']:
+                            update_data['properties'][key] = value
+                
+                # Only make the update if we have properties to update
+                if update_data['properties']:
+                    response = requests.patch(
+                        update_url,
+                        headers=headers,
+                        json=update_data,
+                        timeout=10
+                    )
                 
                 if response.status_code == 200:
                     return True, f"Contact {contact_id} updated successfully"
