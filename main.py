@@ -175,6 +175,36 @@ def book():
         return jsonify({'error': 'No providers found for this location/type'}), 404
 
 
+# TextMagic webhook validation endpoint
+@app.route('/textmagic-webhook', methods=['GET', 'POST'])
+def textmagic_webhook():
+    """Endpoint for TextMagic webhook validation and message handling"""
+    # For GET requests (webhook validation)
+    if request.method == 'GET':
+        logger.info("TextMagic webhook validation request received")
+        return jsonify({"status": "ok"}), 200
+    
+    # For POST requests (incoming messages)
+    try:
+        data = request.get_json() or request.form
+        logger.info(f"TextMagic webhook received data: {data}")
+        
+        # Process the incoming message
+        from_number = data.get('from')
+        to_number = data.get('to')
+        message = data.get('text', '').strip()
+        
+        if not all([from_number, to_number, message]):
+            logger.error("Missing required fields in TextMagic webhook")
+            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+            
+        # Forward to the main SMS webhook
+        return sms_webhook()
+        
+    except Exception as e:
+        logger.error(f"Error processing TextMagic webhook: {str(e)}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 # SMS webhook to handle incoming SMS (e.g., provider replies)
 @app.route('/test-sms', methods=['GET', 'POST'])
 def test_sms_endpoint():
