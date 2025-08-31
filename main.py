@@ -201,17 +201,23 @@ def textmagic_webhook():
     
     # For POST requests (incoming messages)
     try:
-        data = request.get_json() or request.form
+        # First try to get JSON data, then form data
+        data = request.get_json(silent=True) or request.form.to_dict()
         logger.info(f"TextMagic webhook received data: {data}")
         
         # Process the incoming message
-        from_number = data.get('from')
-        to_number = data.get('to')
-        message = data.get('text', '').strip()
+        from_number = data.get('from') or data.get('sender')
+        to_number = data.get('to') or data.get('receiver')
+        message_id = data.get('messageId') or data.get('id')
+        message = data.get('text', data.get('message', '')).strip()
+        
+        # Log the received data for debugging
+        logger.info(f"Processed data - From: {from_number}, To: {to_number}, Message: {message}")
         
         if not all([from_number, to_number, message]):
-            logger.error("Missing required fields in TextMagic webhook")
-            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+            error_msg = f"Missing required fields in TextMagic webhook. Data: {data}"
+            logger.error(error_msg)
+            return jsonify({"status": "error", "message": error_msg}), 400
             
         # Forward to the main SMS webhook
         return sms_webhook()
