@@ -10,6 +10,7 @@ import pytz
 import requests
 from dotenv import load_dotenv
 from sms_booking import SMSBookingManager, send_sms
+from crm_integration import save_contact_to_crm, log_communication
 import re
 import traceback
 from flask_limiter import Limiter
@@ -304,6 +305,7 @@ def sms_webhook():
     
     # Generate a unique request ID
     request_id = str(uuid.uuid4())[:8]
+    logger = logging.getLogger(__name__)
     
     # Log the start of request processing
     logger.info(f"\n=== NEW REQUEST {request_id} ===")
@@ -316,240 +318,167 @@ def sms_webhook():
             if current_time - RECENT_MESSAGES[msg_key]['timestamp'] > 300:  # 5 minutes
                 del RECENT_MESSAGES[msg_key]
     
-    # Log the raw request data first
+    # Log request details
     try:
-        logger.info(f"\n=== NEW REQUEST {request_id} ===")
+        logger.info(f"\n=== REQUEST DETAILS ===")
+        logger.info(f"Time: {datetime.utcnow().isoformat()}")
         logger.info(f"Method: {request.method}")
         logger.info(f"URL: {request.url}")
         logger.info(f"Headers: {dict(request.headers)}")
         logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"Form Data: {dict(request.form)}")
-        logger.info(f"JSON Data: {request.get_json(silent=True)}")
-        logger.info(f"Raw Data: {request.get_data().decode('utf-8', errors='replace')}")
+        
+        # Get raw data for logging
+        raw_data = request.get_data().decode('utf-8', errors='replace')
+        logger.info(f"Raw Data (first 1000 chars): {raw_data[:1000]}")
+        
+        # Try to parse JSON if content-type is application/json
+        json_data = None
+        if request.is_json:
+            try:
+                json_data = request.get_json()
+                logger.info(f"JSON Data: {json.dumps(json_data, indent=2)}")
+            except Exception as e:
+                logger.error(f"Failed to parse JSON: {str(e)}")
+        
+        # Log form data if present
+        if request.form:
+            logger.info("Form Data:")
+            for key, value in request.form.items():
+                logger.info(f"  {key}: {value}")
+                
     except Exception as e:
-        logger.error(f"Error logging request data: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"Error in request logging: {str(e)}\n{traceback.format_exc()}")
     
-    # Log the raw request data first
+    # Handle GET requests (for webhook verification)
+    if request.method == 'GET':
+        logger.info("Received GET request - webhook verification")
+        return "SMS Webhook is working", 200, {'Content-Type': 'text/plain'}
+    
+    # Parse incoming message data
     try:
-        logger.info(f"\n=== RAW REQUEST DATA ===")
-        logger.info(f"Method: {request.method}")
-        logger.info(f"Headers: {dict(request.headers)}")
+        # Initialize variables
+        from_number = None
+        to_number = None
+        message_body = None
+        
+        # Try to get data from JSON
+        if request.is_json and json_data:
+            from_number = json_data.get('from') or json_data.get('From') or json_data.get('sender')
+            to_number = json_data.get('to') or json_data.get('To') or json_data.get('recipient')
+            message_body = json_data.get('body') or json_data.get('Body') or json_data.get('message')
+        
+        # Try to get data from form
+        if not all([from_number, to_number, message_body]):
+            from_number = request.form.get('from') or request.form.get('From') or request.form.get('sender')
+            to_number = request.form.get('to') or request.form.get('To') or request.form.get('recipient')
+            message_body = request.form.get('body') or request.form.get('Body') or request.form.get('message')
+        
+        # Try to get from args if still not found
+        if not all([from_number, to_number, message_body]):
+            from_number = request.args.get('from') or request.args.get('From')
+            to_number = request.args.get('to') or request.args.get('To')
+            message_body = request.args.get('body') or request.args.get('Body')
+        
+        # Log parsed data
+        logger.info(f"\n=== PARSED MESSAGE ===")
+        logger.info(f"From: {from_number}")
+        logger.info(f"To: {to_number}")
+        logger.info(f"Message: {message_body}")
+        
+        # Validate required fields
+        if not all([from_number, to_number, message_body]):
+            error_msg = f"Missing required fields. From: {from_number}, To: {to_number}, Message: {message_body}"
+            logger.error(error_msg)
+            return jsonify({'status': 'error', 'message': error_msg}), 400
+            
+        # Clean the phone numbers
+        from_number = clean_phone_number(from_number)
+        to_number = clean_phone_number(to_number)
+        
+        if not from_number or not to_number:
+            error_msg = f"Invalid phone numbers. From: {from_number}, To: {to_number}"
+            logger.error(error_msg)
+            return jsonify({'status': 'error', 'message': error_msg}), 400
+            
+        # Save contact to CRM (in a background thread to not block the response)
+        def save_contact():
+            try:
+                # Save the contact to CRM
+                success, message = save_contact_to_crm(
+                    phone_number=from_number,
+                    name=json_data.get('name') if json_data else None,
+                    email=json_data.get('email') if json_data else None,
+                    custom_fields={
+                        'last_message': message_body[:500],
+                        'source': 'SMS Webhook',
+                        'first_seen': datetime.utcnow().isoformat(),
+                        'last_contacted': datetime.utcnow().isoformat()
+                    }
+                )
+                logger.info(f"CRM contact save result: {success} - {message}")
+                
+                # Log the communication
+                log_success = log_communication(
+                    phone_number=from_number,
+                    direction='inbound',
+                    message=message_body,
+                    status='received'
+                )
+                if not log_success:
+                    logger.warning("Failed to log communication to CRM")
+                    
+            except Exception as e:
+                logger.error(f"Error in CRM operations: {str(e)}\n{traceback.format_exc()}")
+        
+        # Start the CRM operations in a background thread
+        import threading
+        threading.Thread(target=save_contact, daemon=True).start()
+        
+        # Check for duplicate message
+        message_key = get_message_key(from_number, to_number, message_body)
+        with MESSAGE_LOCK:
+            if message_key in RECENT_MESSAGES:
+                logger.warning(f"Duplicate message detected: {message_key}")
+                return jsonify({'status': 'success', 'message': 'Duplicate message ignored'}), 200
+                
+            # Add to recent messages
+            RECENT_MESSAGES[message_key] = {
+                'timestamp': current_time,
+                'from': from_number,
+                'to': to_number,
+                'body': message_body
+            }
+        
+        # Process the message (this is where you'd add your business logic)
+        logger.info(f"Processing message from {from_number} to {to_number}")
+        
+        # Example: Echo the message back
+        response_message = f"Received your message: {message_body}"
+        send_success, send_result = send_sms(
+            to=from_number,
+            body=response_message,
+            from_number=to_number
+        )
+        
+        if not send_success:
+            logger.error(f"Failed to send response: {send_result}")
+            return jsonify({'status': 'error', 'message': 'Failed to send response'}), 500
+            
+        logger.info(f"Successfully processed message from {from_number}")
+        return jsonify({'status': 'success', 'message': 'Message processed'}), 200
+        
+    except Exception as e:
+        error_msg = f"Error processing message: {str(e)}"
+        logger.error(f"{error_msg}\n{traceback.format_exc()}")
+        
+        # Log all available data for debugging
+        logger.info("\n=== ERROR DEBUGGING INFO ===")
+        logger.info(f"Request method: {request.method}")
         logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"Raw data: {request.get_data().decode('utf-8', errors='replace')}")
         logger.info(f"Form data: {dict(request.form)}")
         logger.info(f"JSON data: {request.get_json(silent=True)}")
-    except Exception as e:
-        logger.error(f"Error logging raw request: {str(e)}")
-    
-    debug_info = {
-        'timestamp': datetime.utcnow().isoformat(),
-        'request_id': request_id,
-        'method': request.method,
-        'headers': dict(request.headers),
-        'form': dict(request.form),
-        'json': request.get_json(silent=True),
-        'args': dict(request.args),
-        'remote_addr': request.remote_addr,
-        'user_agent': str(request.user_agent),
-        'content_type': request.content_type,
-        'raw_data': request.get_data().decode('utf-8', errors='replace')
-    }
-    
-    # Log the debug info
-    logger.info(f"\n=== INCOMING MESSAGE DEBUG ===\n{json.dumps(debug_info, indent=2)}")
-    
-    try:
-        logger.info(f"\n=== New Request ({request_id}) ===")
-        logger.info(f"Time: {datetime.utcnow().isoformat()}")
         
-        # Handle GET requests (for ClickSend verification)
-        if request.method == 'GET':
-            logger.info("Received GET request - ClickSend webhook verification")
-            return "SMS Callback Request Successful", 200, {'Content-Type': 'text/plain'}
-            
-        # Log request details
-        logger.info(f"[{request_id}] Method: {request.method}")
-        logger.info(f"[{request_id}] URL: {request.url}")
-        logger.info(f"[{request_id}] Headers: {dict(request.headers)}")
-        logger.info(f"[{request_id}] Content-Type: {request.content_type}")
-        logger.info(f"[{request_id}] Raw Data: {request.get_data()[:1000]}")  # Log first 1000 chars of raw data
-        
-        # Check content type and parse data
-        if not request.is_json and not request.form:
-            logger.error("No form or JSON data received")
-            return jsonify({'error': 'No data received'}), 400
-            
-        data = request.form
-        
-        # Log all form fields for debugging
-        logger.info(f"\n[{request_id}] === Form Data ===")
-        for key, value in data.items():
-            logger.info(f"[{request_id}] {key}: {value}")
-        
-        # Log JSON data if present
-        if request.is_json:
-            json_data = request.get_json()
-            logger.info(f"[{request_id}] === JSON Data ===")
-            logger.info(f"[{request_id}] {json_data}")
-            
-        # Log ClickSend specific fields
-        clicksend_fields = ['to', 'from', 'body', 'message_id', 'timestamp', 'keyword', 'originalbody', 
-                          'senderid', 'originalrecipient', 'date', 'source', 'type', 'network_code',
-                          'network_name', 'country', 'price', 'status']
-        for field in clicksend_fields:
-            if field in data:
-                logger.info(f"[{request_id}] ClickSend field - {field}: {data[field]}")
-            
-        # Log all available data for debugging
-        logger.info(f"\n[{request_id}] === All Available Data ===")
-        logger.info(f"[{request_id}] Request args: {request.args}")
-        logger.info(f"[{request_id}] Request form: {request.form}")
-        logger.info(f"[{request_id}] Request values: {request.values}")
-        logger.info(f"[{request_id}] Request JSON: {request.get_json(silent=True)}")
-        
-        try:
-            # Log all available data fields for debugging
-            logger.info("\n=== All Available Data Fields ===")
-            logger.info(f"Request method: {request.method}")
-            logger.info(f"Content-Type: {request.content_type}")
-            logger.info(f"Form data: {dict(request.form)}")
-            logger.info(f"JSON data: {request.get_json(silent=True)}")
-            logger.info(f"Raw data: {request.get_data().decode('utf-8', errors='replace')}")
-            
-            # Get data from form or JSON
-            if request.is_json:
-                json_data = request.get_json(silent=True) or {}
-                data = {**data, **json_data}  # Merge with form data
-                
-            # Check if this is a TextMagic webhook
-            is_textmagic = 'sender' in data and 'receiver' in data and 'text' in data
-            
-            if is_textmagic:
-                # Handle TextMagic webhook format
-                logger.info("Processing TextMagic webhook format")
-                from_number = clean_phone_number(data.get('sender'))
-                to_number = clean_phone_number(data.get('receiver'))
-                body = data.get('text', '')
-            else:
-                # Handle other webhook formats (ClickSend, etc.)
-                from_number = clean_phone_number(
-                    data.get('from') or 
-                    data.get('sender') or 
-                    data.get('From') or 
-                    data.get('originalsenderid') or 
-                    data.get('sms') or
-                    data.get('from_number') or
-                    data.get('contact', {}).get('phone_number') or
-                    data.get('source') or
-                    data.get('source_number')
-                )
-                
-                to_number = clean_phone_number(
-                    data.get('to') or 
-                    data.get('recipient') or 
-                    data.get('To') or 
-                    data.get('originalrecipient') or
-                    data.get('to_number') or
-                    data.get('destination', '').split(':')[-1] or  # Handle ClickSend's format
-                    data.get('target') or
-                    data.get('target_number')
-                )
-                
-                body = (
-                    data.get('text') or 
-                    data.get('message') or 
-                    data.get('body') or 
-                    data.get('Body') or
-                    data.get('message_body') or
-                    data.get('content') or
-                    data.get('message_text') or
-                    data.get('sms_body') or
-                    ''
-                )
-            
-            # Clean up the body
-            if body is not None and not isinstance(body, str):
-                body = str(body)
-            body = (body or '').strip()
-            
-            # Log extracted data
-            logger.info(f"\n=== Extracted Data ===")
-            logger.info(f"From: {from_number} (type: {type(from_number)})")
-            logger.info(f"To: {to_number} (type: {type(to_number)})")
-            logger.info(f"Body: {body} (type: {type(body)})")
-            
-            # Generate a unique key for this message
-            message_key = get_message_key(from_number, to_number, body)
-            
-            # Check for duplicate message using the lock
-            with MESSAGE_LOCK:
-                current_time = time.time()
-                
-                # Check if we've seen this exact message recently
-                if message_key in RECENT_MESSAGES:
-                    last_seen = RECENT_MESSAGES[message_key]['timestamp']
-                    if current_time - last_seen < 300:  # 5 minutes
-                        logger.info(f"Duplicate message detected (key: {message_key}), ignoring")
-                        return jsonify({
-                            'status': 'success', 
-                            'message': 'Duplicate message, already processed',
-                            'request_id': request_id
-                        }), 200
-                
-                # Store this message
-                RECENT_MESSAGES[message_key] = {
-                    'timestamp': current_time,
-                    'from': from_number,
-                    'to': to_number,
-                    'body': body
-                }
-                
-                # Update conversation state
-                CONVERSATION_STATE[f"{from_number}:{to_number}"] = {
-                    'last_activity': current_time,
-                    'last_message': body,
-                    'last_response': None
-                }
-            
-            # Validate required fields with more detailed error messages
-            if not from_number:
-                error_msg = f"Missing or invalid 'from' number in data: {dict(data)}"
-                logger.error(error_msg)
-                return jsonify({
-                    'error': 'Invalid sender number format',
-                    'details': error_msg,
-                    'received_data': dict(data),
-                    'request_headers': dict(request.headers),
-                    'request_method': request.method,
-                    'content_type': request.content_type
-                }), 400
-                
-            if not to_number:
-                error_msg = f"Missing or invalid 'to' number in data: {dict(data)}"
-                logger.error(error_msg)
-                return jsonify({
-                    'error': 'Invalid recipient number format',
-                    'details': error_msg,
-                    'received_data': dict(data),
-                    'request_headers': dict(request.headers),
-                    'request_method': request.method,
-                    'content_type': request.content_type
-                }), 400
-                
-            if not body:
-                logger.warning("Empty message body received")
-                
-        except Exception as e:
-            error_msg = f"Error processing request: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            return jsonify({
-                'error': 'Error processing request',
-                'details': str(e),
-                'request_headers': dict(request.headers),
-                'request_method': request.method,
-                'content_type': request.content_type,
-                'raw_data': request.get_data().decode('utf-8', errors='replace')
-            }), 400
+        return jsonify({'status': 'error', 'message': error_msg}), 500
             
         logger.info(f"📱 Processing SMS from {from_number} to {to_number}")
         logger.info(f"Message body: {body}")
