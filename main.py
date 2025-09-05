@@ -783,9 +783,25 @@ Or just reply with your preferred day/time and we'll help you out! 💆‍♀️
         logger.error(f"❌ Unhandled error in sms_webhook: {str(e)}", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'Internal server error',
-            'error': str(e)
+            'message': 'Internal server error'
         }), 500
+
+def clean_url(url):
+    """Clean and validate URL by removing surrounding quotes and extra slashes."""
+    if not url:
+        return None
+    
+    # Remove any surrounding whitespace and quotes
+    url = str(url).strip().strip('"\'')
+    
+    # Remove any trailing slashes
+    url = url.rstrip('/')
+    
+    # Basic URL validation
+    if not (url.startswith('http://') or url.startswith('https://')):
+        url = 'https://' + url
+        
+    return url
 
 # Webhook endpoint for Fluent Forms Pro integration
 @app.route('/fluentforms-webhook', methods=['POST'])
@@ -798,6 +814,13 @@ def fluentforms_webhook():
         
         # Get form data
         data = request.get_json(silent=True) or request.form
+        
+        # Clean and validate any URL fields
+        if 'website' in data:
+            data['website'] = clean_url(data['website'])
+        if 'url' in data:
+            data['url'] = clean_url(data['url'])
+        
         logger.info(f"Parsed Data: {data}")
         
         # Extract form fields (adjust these to match your form field names)
