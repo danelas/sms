@@ -291,6 +291,14 @@ def get_message_key(from_number, to_number, body):
     """Generate a unique key for message deduplication"""
     return f"{from_number}:{to_number}:{body.lower().strip()}"
 
+# Add a new route for /webhook/sms that forwards to sms_webhook function
+@app.route('/webhook/sms', methods=['POST', 'GET'])
+@limiter.limit("10 per minute")
+@limiter.limit("100 per day")
+def webhook_sms():
+    """Legacy endpoint for /webhook/sms"""
+    return sms_webhook()
+
 @app.route('/sms-webhook', methods=['POST', 'GET'])
 @limiter.limit("10 per minute")  # Rate limiting
 @limiter.limit("100 per day")   # Additional rate limit
