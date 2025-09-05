@@ -192,6 +192,8 @@ def book():
 
 # TextMagic webhook validation endpoint
 @app.route('/textmagic-webhook', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")  # Rate limiting
+@limiter.limit("100 per day")   # Additional rate limit
 def textmagic_webhook():
     """Endpoint for TextMagic webhook validation and message handling"""
     # For GET requests (webhook validation)
@@ -219,12 +221,31 @@ def textmagic_webhook():
             logger.error(error_msg)
             return jsonify({"status": "error", "message": error_msg}), 400
             
-        # Forward to the main SMS webhook
-        return sms_webhook()
+        # Check for duplicate message
+        message_key = get_message_key(from_number, to_number, message)
+        with MESSAGE_LOCK:
+            if message_key in RECENT_MESSAGES:
+                logger.info(f"Duplicate message detected and ignored: {message_key}")
+                return jsonify({"status": "success", "message": "Duplicate message ignored"}), 200
+                
+            # Add to recent messages
+            RECENT_MESSAGES[message_key] = {
+                'timestamp': time.time(),
+                'from': from_number,
+                'to': to_number,
+                'message': message
+            }
+        
+        # Here you would process the message as needed
+        # For now, just log it and return success
+        logger.info(f"Processing message from {from_number} to {to_number}: {message}")
+        
+        # Return success response
+        return jsonify({"status": "success", "message": "Message received"}), 200
         
     except Exception as e:
         logger.error(f"Error processing TextMagic webhook: {str(e)}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "Internal server error"}), 500
 
 # SMS webhook to handle incoming SMS (e.g., provider replies)
 @app.route('/test-sms', methods=['GET', 'POST'])
@@ -873,16 +894,17 @@ def fluentforms_webhook():
         
         logger.info(f"Found provider: {provider.get('Name')} - {provider_phone}")
         
-        # Format the message to the provider
+        # Format a single, clear message to the provider with all necessary details
         provider_msg = (
-            f"NEW BOOKING REQUEST\n"
-            f"From: {name}\n"
-            f"Phone: {phone}\n"
-            f"Email: {email}\n"
-            f"Service: {service_type}\n"
-            f"Date: {appointment_date} at {appointment_time}\n"
-            f"Location: {location}\n"
-            f"Notes: {notes}"
+            "📅 NEW BOOKING REQUEST 📅\n\n"
+            f"👤 Customer: {name}\n"
+            f"📱 Phone: {phone}\n"
+            f"✉️ Email: {email}\n\n"
+            f"📋 Service: {service_type}\n"
+            f"📅 Date: {appointment_date}\n"
+            f"⏰ Time: {appointment_time}\n"
+            f"📍 Location: {location}\n\n"
+            f"📝 Notes: {notes if notes else 'None'}"
         )
         
         # Send the message to the provider
