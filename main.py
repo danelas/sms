@@ -359,24 +359,57 @@ def get_message_key(from_number, to_number, body, message_id=None):
 @limiter.limit("2000 per day")   # Increased daily limit
 def webhook_sms():
     """Legacy endpoint for /webhook/sms"""
+    request_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    
     try:
         # Log the raw request data for debugging
-        logger.info(f"=== NEW WEBHOOK REQUEST ===")
+        logger.info(f"\n=== NEW WEBHOOK REQUEST {request_id} ===")
+        logger.info(f"Time: {datetime.utcnow().isoformat()}")
         logger.info(f"Method: {request.method}")
+        logger.info(f"URL: {request.url}")
         logger.info(f"Headers: {dict(request.headers)}")
         
         if request.method == 'GET':
             logger.info("GET request received, returning 200 OK")
-            return jsonify({"status": "ok"}), 200
+            return jsonify({"status": "ok", "request_id": request_id}), 200
+        
+        # Log form data
+        form_data = dict(request.form)
+        logger.info(f"Form Data: {form_data}")
+        
+        # Log JSON data if present
+        json_data = request.get_json(silent=True)
+        if json_data:
+            logger.info(f"JSON Data: {json_data}")
             
         # Process the request
+        logger.info(f"Processing request {request_id}...")
         result = sms_webhook()
-        logger.info(f"Request processed successfully: {result}")
+        
+        # Log successful processing
+        process_time = time.time() - start_time
+        logger.info(f"Request {request_id} processed in {process_time:.2f}s")
+        logger.info(f"Response: {result}")
+        
+        # Add request ID to response
+        if isinstance(result, tuple) and len(result) > 0 and hasattr(result[0], 'get_json'):
+            response_data = result[0].get_json()
+            if isinstance(response_data, dict):
+                response_data['request_id'] = request_id
+                return jsonify(response_data), result[1] if len(result) > 1 else 200
+        
         return result
         
     except Exception as e:
-        logger.error(f"Error in webhook_sms: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({"status": "error", "message": "Internal server error"}), 500
+        error_msg = f"Error in webhook_sms: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return jsonify({
+            "status": "error", 
+            "message": "Internal server error",
+            "request_id": request_id,
+            "error": str(e)
+        }), 500
 
 @app.route('/sms-webhook', methods=['POST', 'GET'])
 @limiter.limit("10 per minute")  # Rate limiting
@@ -1118,11 +1151,15 @@ def test_webhook():
 
 # Test endpoint to verify webhook connectivity (GET request for browser testing)
 # Keep-alive endpoint for uptime monitoring
-@app.route('/ping', methods=['GET'])
+@app.route('/ping', methods=['GET', 'POST'])
 def ping():
     try:
         # Clean up old messages on each ping
         cleanup_old_messages()
+        
+        # Log the incoming ping request
+        if request.method == 'POST':
+            logger.info(f"POST /ping received with data: {request.get_json(silent=True) or request.form}")
         
         # Basic health check
         health_status = {
@@ -1130,22 +1167,28 @@ def ping():
             'timestamp': datetime.utcnow().isoformat(),
             'service': 'sms-webhook',
             'version': '1.0.0',
+            'endpoints': {
+                'sms_webhook': '/webhook/sms',
+                'textmagic_webhook': '/textmagic-webhook'
+            },
             'stats': {
                 'recent_messages': len(RECENT_MESSAGES),
                 'conversations': len(CONVERSATION_STATE)
             },
             'memory_usage': {
-                'rss_mb': f"{psutil.Process().memory_info().rss / 1024 / 1024:.2f}MB",
-                'cpu_percent': psutil.cpu_percent()
+                'rss_mb': f"{psutil.Process().memory_info().rss / 1024 / 1024:.2f}MB" if hasattr(psutil, 'Process') else 'N/A',
+                'cpu_percent': psutil.cpu_percent() if hasattr(psutil, 'cpu_percent') else 'N/A'
             }
         }
         logger.info(f"Health check: {health_status}")
         return jsonify(health_status)
     except Exception as e:
-        logger.error(f"Error in health check: {str(e)}")
+        error_msg = f"Error in health check: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
         return jsonify({
             'status': 'error',
-            'message': str(e)
+            'message': str(e),
+            'error_details': error_msg
         }), 500
 
 # VIP message functionality has been removed
