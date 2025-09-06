@@ -221,20 +221,39 @@ def textmagic_webhook():
             logger.error(error_msg)
             return jsonify({"status": "error", "message": error_msg}), 400
             
-        # Check for duplicate message
-        message_key = get_message_key(from_number, to_number, message)
+        # Generate message key with message_id if available
+        message_key = get_message_key(from_number, to_number, message, message_id)
+        
         with MESSAGE_LOCK:
+            current_time = time.time()
+            
+            # Clean up old messages first
+            cleanup_old_messages()
+            
+            # Check for duplicate message
             if message_key in RECENT_MESSAGES:
-                logger.info(f"Duplicate message detected and ignored: {message_key}")
-                return jsonify({"status": "success", "message": "Duplicate message ignored"}), 200
+                msg_age = current_time - RECENT_MESSAGES[message_key]['timestamp']
+                logger.info(f"Duplicate message detected (key: {message_key}, age: {msg_age:.1f}s), ignoring")
+                return jsonify({
+                    "status": "success", 
+                    "message": "Duplicate message ignored",
+                    "duplicate": True,
+                    "message_id": message_id,
+                    "timestamp": current_time
+                }), 200
                 
             # Add to recent messages
             RECENT_MESSAGES[message_key] = {
-                'timestamp': time.time(),
+                'timestamp': current_time,
                 'from': from_number,
                 'to': to_number,
-                'message': message
+                'message': message[:100],  # Store only first 100 chars
+                'message_id': message_id,
+                'request_id': request_id
             }
+            
+            logger.info(f"Message stored in cache with key: {message_key}")
+            logger.info(f"Current cache size: {len(RECENT_MESSAGES)} messages")
         
         # Here you would process the message as needed
         # For now, just log it and return success
@@ -269,6 +288,8 @@ def test_sms_endpoint():
 import threading
 import sqlite3
 import os
+import psutil  # For system monitoring
+import time
 from datetime import datetime, timedelta
 
 # Initialize SQLite database for persistent storage
@@ -286,18 +307,76 @@ MESSAGE_LOCK = threading.Lock()
 # Dictionary to track conversation state
 CONVERSATION_STATE = {}
 
+# Dictionary to track recent messages with timestamps
+RECENT_MESSAGES = {}
+MESSAGE_TTL = 3600  # 1 hour TTL for message deduplication
+
+# Background task to clean up old messages
+def cleanup_old_messages():
+    """Remove old messages from the deduplication cache"""
+    global RECENT_MESSAGES
+    current_time = time.time()
+    with MESSAGE_LOCK:
+        # Remove messages older than MESSAGE_TTL seconds
+        RECENT_MESSAGES = {
+            k: v for k, v in RECENT_MESSAGES.items() 
+            if current_time - v['timestamp'] < MESSAGE_TTL
+        }
+
 # Generate a unique key for message deduplication
-def get_message_key(from_number, to_number, body):
-    """Generate a unique key for message deduplication"""
-    return f"{from_number}:{to_number}:{body.lower().strip()}"
+def get_message_key(from_number, to_number, body, message_id=None):
+    """Generate a unique key for message deduplication
+    
+    Args:
+        from_number: Sender's phone number
+        to_number: Recipient's phone number
+        body: Message content
+        message_id: Optional message ID for exact matching
+        
+    Returns:
+        str: A unique key for this message
+    """
+    try:
+        # Clean and normalize the message body
+        body = str(body or '').strip().lower()
+        
+        # If we have a message_id, use it for exact matching
+        if message_id:
+            return f"msg_{message_id}"
+            
+        # For messages without ID, create a hash of the content
+        import hashlib
+        body_hash = hashlib.md5(body.encode('utf-8')).hexdigest()[:8]
+        return f"{from_number}:{to_number}:{body_hash}"
+    except Exception as e:
+        logger.error(f"Error generating message key: {str(e)}")
+        # Fallback to simple key if there's an error
+        return f"{from_number}:{to_number}:{str(hash(body))[:8]}"
 
 # Add a new route for /webhook/sms that forwards to sms_webhook function
 @app.route('/webhook/sms', methods=['POST', 'GET'])
-@limiter.limit("10 per minute")
-@limiter.limit("100 per day")
+@limiter.limit("100 per minute")  # Increased rate limit for production
+@limiter.limit("2000 per day")   # Increased daily limit
 def webhook_sms():
     """Legacy endpoint for /webhook/sms"""
-    return sms_webhook()
+    try:
+        # Log the raw request data for debugging
+        logger.info(f"=== NEW WEBHOOK REQUEST ===")
+        logger.info(f"Method: {request.method}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        
+        if request.method == 'GET':
+            logger.info("GET request received, returning 200 OK")
+            return jsonify({"status": "ok"}), 200
+            
+        # Process the request
+        result = sms_webhook()
+        logger.info(f"Request processed successfully: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in webhook_sms: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({"status": "error", "message": "Internal server error"}), 500
 
 @app.route('/sms-webhook', methods=['POST', 'GET'])
 @limiter.limit("10 per minute")  # Rate limiting
@@ -308,6 +387,7 @@ def sms_webhook():
     import json
     import traceback
     import time
+    from datetime import datetime, timezone
     
     # Generate a unique request ID
     request_id = str(uuid.uuid4())[:8]
@@ -325,14 +405,30 @@ def sms_webhook():
     
     # Log the raw request data first
     try:
-        logger.info(f"\n=== NEW REQUEST {request_id} ===")
+        current_time = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
+        logger.info(f"\n=== NEW REQUEST {request_id} at {current_time} ===")
         logger.info(f"Method: {request.method}")
         logger.info(f"URL: {request.url}")
-        logger.info(f"Headers: {dict(request.headers)}")
         logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"Form Data: {dict(request.form)}")
-        logger.info(f"JSON Data: {request.get_json(silent=True)}")
-        logger.info(f"Raw Data: {request.get_data().decode('utf-8', errors='replace')}")
+        
+        # Log form data with sensitive info redacted
+        form_data = dict(request.form)
+        if 'api_key' in form_data:
+            form_data['api_key'] = '***REDACTED***'
+        logger.info(f"Form Data: {form_data}")
+        
+        # Log JSON data if present
+        json_data = request.get_json(silent=True)
+        if json_data:
+            logger.info(f"JSON Data: {json_data}")
+            
+        # Log raw data (first 500 chars to avoid huge logs)
+        raw_data = request.get_data()
+        if raw_data:
+            try:
+                logger.info(f"Raw Data (first 500 chars): {raw_data.decode('utf-8', errors='replace')[:500]}")
+            except Exception as e:
+                logger.warning(f"Could not decode raw data: {str(e)}")
     except Exception as e:
         logger.error(f"Error logging request data: {str(e)}\n{traceback.format_exc()}")
     
@@ -1024,11 +1120,33 @@ def test_webhook():
 # Keep-alive endpoint for uptime monitoring
 @app.route('/ping', methods=['GET'])
 def ping():
-    return jsonify({
-        'status': 'alive', 
-        'time': time.time(),
-        'service': 'Gold Touch Massage SMS Service'
-    }), 200
+    try:
+        # Clean up old messages on each ping
+        cleanup_old_messages()
+        
+        # Basic health check
+        health_status = {
+            'status': 'alive', 
+            'timestamp': datetime.utcnow().isoformat(),
+            'service': 'sms-webhook',
+            'version': '1.0.0',
+            'stats': {
+                'recent_messages': len(RECENT_MESSAGES),
+                'conversations': len(CONVERSATION_STATE)
+            },
+            'memory_usage': {
+                'rss_mb': f"{psutil.Process().memory_info().rss / 1024 / 1024:.2f}MB",
+                'cpu_percent': psutil.cpu_percent()
+            }
+        }
+        logger.info(f"Health check: {health_status}")
+        return jsonify(health_status)
+    except Exception as e:
+        logger.error(f"Error in health check: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 # VIP message functionality has been removed
 
